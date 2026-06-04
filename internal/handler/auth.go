@@ -250,6 +250,68 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.NewAuthLoginResponse(response))
 }
 
+// GetLDAPConfig godoc
+// @Summary      获取LDAP登录配置
+// @Description  返回LDAP是否启用以及provider展示名称，供前端决定是否展示LDAP登录入口
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  types.LDAPConfigResponse
+// @Router       /auth/ldap/config [get]
+func (h *AuthHandler) GetLDAPConfig(c *gin.Context) {
+	providerDisplayName := ""
+	enabled := false
+
+	if h.configInfo != nil && h.configInfo.LDAPAuth != nil {
+		enabled = h.configInfo.LDAPAuth.Enable
+		providerDisplayName = strings.TrimSpace(h.configInfo.LDAPAuth.ProviderDisplayName)
+	}
+
+	c.JSON(http.StatusOK, &types.LDAPConfigResponse{
+		Success:             true,
+		Enabled:             enabled,
+		ProviderDisplayName: providerDisplayName,
+	})
+}
+
+// LDAPLogin godoc
+// @Summary      LDAP登录
+// @Description  使用LDAP账号密码认证，成功后签发WeKnora本地访问令牌
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.LDAPLoginRequest  true  "LDAP登录请求参数"
+// @Success      200      {object}  types.LoginResponse
+// @Failure      401      {object}  errors.AppError  "认证失败"
+// @Router       /auth/ldap/login [post]
+func (h *AuthHandler) LDAPLogin(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req types.LDAPLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse LDAP login request parameters", err)
+		appErr := errors.NewValidationError("Invalid LDAP login parameters").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	response, err := h.userService.LoginWithLDAP(ctx, &req)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to login with LDAP: %v", err)
+		appErr := errors.NewUnauthorizedError("LDAP login failed").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+	if !response.Success {
+		logger.Warnf(ctx, "LDAP login failed: %s", response.Message)
+		c.JSON(http.StatusUnauthorized, response)
+		return
+	}
+
+	logger.Infof(ctx, "User logged in successfully via LDAP: %s", secutils.SanitizeForLog(req.Username))
+	c.JSON(http.StatusOK, response)
+}
+
 // GetOIDCAuthorizationURL godoc
 // @Summary      获取OIDC授权地址
 // @Description  根据后端OIDC配置生成第三方登录跳转地址

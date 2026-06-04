@@ -185,17 +185,18 @@
 
           <div class="form-content">
             <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical">
-              <t-form-item :label="$t('auth.email')" name="email">
-                <t-input v-model="formData.email" :placeholder="$t('auth.emailPlaceholder')" type="text"
-                  autocomplete="email" size="large" :disabled="loading" />
+              <t-form-item :label="loginAccountLabel" name="email">
+                <t-input v-model="formData.email" :placeholder="loginAccountPlaceholder" type="text"
+                  autocomplete="email" size="large" :disabled="loading || ldapLoading" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
                 <t-input v-model="formData.password" :placeholder="$t('auth.passwordPlaceholder')" type="password"
-                  autocomplete="current-password" size="large" :disabled="loading" @enter="handleLogin" />
+                  autocomplete="current-password" size="large" :disabled="loading || ldapLoading" @enter="handleLogin" />
               </t-form-item>
 
-              <t-button type="submit" theme="primary" size="large" block :loading="loading" class="submit-button">
+              <t-button type="submit" theme="primary" size="large" block :loading="loading" :disabled="ldapLoading"
+                class="submit-button">
                 {{ loading ? $t('auth.loggingIn') : $t('auth.login') }}
               </t-button>
 
@@ -209,12 +210,17 @@
                 </t-button>
               </div>
 
-              <div v-if="oidcEnabled" class="oidc-divider">
+              <div v-if="ldapEnabled || oidcEnabled" class="oidc-divider">
                 <span>{{ $t('auth.orContinueWith') }}</span>
               </div>
 
-              <t-button v-if="oidcEnabled" theme="default" size="large" block :loading="oidcLoading" :disabled="loading"
-                class="oidc-button" @click="handleOIDCLogin">
+              <t-button v-if="ldapEnabled" theme="default" size="large" block :loading="ldapLoading"
+                :disabled="loading || oidcLoading" class="oidc-button" @click="handleLDAPLogin">
+                {{ ldapLoading ? $t('auth.loggingInWithLDAP') : ldapLoginText }}
+              </t-button>
+
+              <t-button v-if="oidcEnabled" theme="default" size="large" block :loading="oidcLoading"
+                :disabled="loading || ldapLoading" class="oidc-button" @click="handleOIDCLogin">
                 {{ oidcLoading ? $t('auth.redirectingToOIDC') : oidcLoginText }}
               </t-button>
             </t-form>
@@ -335,9 +341,11 @@ import 'swiper/css/effect-fade'
 import 'swiper/css/pagination'
 import {
   login,
+  ldapLogin,
   register,
   getOIDCAuthorizationURL,
   getOIDCConfig,
+  getLDAPConfig,
   autoSetup,
   getAuthConfig,
   userInfoFromApi,
@@ -393,9 +401,12 @@ const registerFormRef = ref()
 
 // State management
 const loading = ref(false)
+const ldapLoading = ref(false)
 const oidcLoading = ref(false)
 const isRegisterMode = ref(false)
 const showLanguageMenu = ref(false)
+const ldapEnabled = ref(false)
+const ldapProviderName = ref('')
 const oidcEnabled = ref(false)
 const oidcProviderName = ref('')
 // registrationEnabled defaults to true so that on first paint the Register
@@ -429,6 +440,14 @@ const oidcLoginText = computed(() => {
   }
   return t('auth.oidcLogin')
 })
+const ldapLoginText = computed(() => {
+  if (ldapProviderName.value) {
+    return t('auth.ldapLoginWithProvider', { provider: ldapProviderName.value })
+  }
+  return t('auth.ldapLogin')
+})
+const loginAccountLabel = computed(() => ldapEnabled.value ? t('auth.account') : t('auth.email'))
+const loginAccountPlaceholder = computed(() => ldapEnabled.value ? t('auth.accountPlaceholder') : t('auth.emailPlaceholder'))
 const currentLangOption = computed(() => languageOptions.find(l => l.value === currentLanguage.value))
 
 // Login form data
@@ -599,6 +618,17 @@ const loadOIDCConfig = async () => {
   }
 }
 
+const loadLDAPConfig = async () => {
+  try {
+    const response = await getLDAPConfig()
+    ldapEnabled.value = !!response.success && !!response.enabled
+    ldapProviderName.value = response.provider_display_name || ''
+  } catch {
+    ldapEnabled.value = false
+    ldapProviderName.value = ''
+  }
+}
+
 // loadAuthConfig fetches /auth/config and caches whether self-service
 // registration is allowed. Failures fall back to "enabled" so a transient
 // network glitch doesn't lock new users out of an open deployment.
@@ -628,6 +658,37 @@ const handleOIDCLogin = async () => {
     MessagePlugin.error(error.message || t('auth.oidcLoginFailed'))
   } finally {
     oidcLoading.value = false
+  }
+}
+
+const handleLDAPLogin = async () => {
+  try {
+    if (!String(formData.email || '').trim()) {
+      MessagePlugin.error(t('auth.accountRequired'))
+      return
+    }
+    if (!String(formData.password || '')) {
+      MessagePlugin.error(t('auth.passwordRequired'))
+      return
+    }
+
+    ldapLoading.value = true
+    const response = await ldapLogin({
+      username: formData.email,
+      password: formData.password,
+    })
+
+    if (response.success) {
+      await persistLoginResponse(response)
+      notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
+    } else {
+      MessagePlugin.error(response.message || t('auth.ldapLoginFailed'))
+    }
+  } catch (error: any) {
+    console.error('LDAP 登录错误:', error)
+    MessagePlugin.error(error.message || t('auth.ldapLoginFailed'))
+  } finally {
+    ldapLoading.value = false
   }
 }
 
@@ -749,6 +810,7 @@ onMounted(async () => {
     // Don't run auto-setup when the user came in via an invite link —
     // they're explicitly trying to register, not bootstrap a Lite
     // single-user instance.
+    loadLDAPConfig()
     loadOIDCConfig()
     return
   }
@@ -774,6 +836,7 @@ onMounted(async () => {
     }
   }
 
+  loadLDAPConfig()
   loadOIDCConfig()
   loadAuthConfig()
 })

@@ -68,6 +68,18 @@ export interface OIDCConfigResponse {
   message?: string
 }
 
+export interface LDAPLoginRequest {
+  username: string
+  password: string
+}
+
+export interface LDAPConfigResponse {
+  success: boolean
+  enabled: boolean
+  provider_display_name?: string
+  message?: string
+}
+
 // 用户注册接口
 export interface RegisterRequest {
   username: string
@@ -213,6 +225,37 @@ export async function login(data: LoginRequest): Promise<LoginResponse> {
   } catch (error: any) {
     return {
       success: false,
+      message: error.message || t('error.auth.loginFailed')
+    }
+  }
+}
+
+/**
+ * LDAP 登录
+ */
+export async function ldapLogin(data: LDAPLoginRequest): Promise<LoginResponse> {
+  try {
+    const response = await post('/api/v1/auth/ldap/login', data)
+    return response as unknown as LoginResponse
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error.message || t('error.auth.loginFailed')
+    }
+  }
+}
+
+/**
+ * 获取 LDAP 登录配置
+ */
+export async function getLDAPConfig(): Promise<LDAPConfigResponse> {
+  try {
+    const response = await get('/api/v1/auth/ldap/config')
+    return response as unknown as LDAPConfigResponse
+  } catch (error: any) {
+    return {
+      success: false,
+      enabled: false,
       message: error.message || t('error.auth.loginFailed')
     }
   }

@@ -48,6 +48,8 @@ var noAuthAPI = map[string][]string{
 	"/api/v1/auth/invitations/lookup": {"POST"},
 	"/api/v1/auth/register-by-invite": {"POST"},
 	"/api/v1/auth/config":             {"GET"},
+	"/api/v1/auth/ldap/config":        {"GET"},
+	"/api/v1/auth/ldap/login":         {"POST"},
 	"/api/v1/auth/oidc/config":        {"GET"},
 	"/api/v1/auth/oidc/url":           {"GET"},
 	"/api/v1/auth/oidc/callback":      {"GET"},

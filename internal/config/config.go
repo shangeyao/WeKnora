@@ -24,6 +24,7 @@ type Config struct {
 	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
 	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
 	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	LDAPAuth        *LDAPAuthConfig        `yaml:"ldap_auth"        json:"ldap_auth"`
 	Models          []ModelConfig          `yaml:"models"           json:"models"`
 	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
 	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
@@ -320,6 +321,27 @@ type OIDCAuthConfig struct {
 	UserInfoMapping       *OIDCUserInfoMapping `yaml:"user_info_mapping"      json:"user_info_mapping"`
 }
 
+type LDAPUserInfoMapping struct {
+	Username string `yaml:"username" json:"username"`
+	Email    string `yaml:"email"    json:"email"`
+}
+
+type LDAPAuthConfig struct {
+	Enable              bool                 `yaml:"enable"                json:"enable"`
+	Host                string               `yaml:"host"                  json:"host"`
+	Port                int                  `yaml:"port"                  json:"port"`
+	UseSSL              bool                 `yaml:"use_ssl"               json:"use_ssl"`
+	StartTLS            bool                 `yaml:"start_tls"             json:"start_tls"`
+	SkipVerify          bool                 `yaml:"skip_verify"           json:"-"`
+	BindDN              string               `yaml:"bind_dn"               json:"bind_dn"`
+	BindPassword        string               `yaml:"bind_password"         json:"-"`
+	BaseDN              string               `yaml:"base_dn"               json:"base_dn"`
+	UserFilter          string               `yaml:"user_filter"           json:"user_filter"`
+	UserIDAttribute     string               `yaml:"user_id_attribute"     json:"user_id_attribute"`
+	ProviderDisplayName string               `yaml:"provider_display_name" json:"provider_display_name"`
+	UserInfoMapping     *LDAPUserInfoMapping `yaml:"user_info_mapping"     json:"user_info_mapping"`
+}
+
 // PromptTemplateI18n holds localized name and description for a prompt template.
 type PromptTemplateI18n struct {
 	Name        string `yaml:"name"        json:"name"`
@@ -578,6 +600,7 @@ func LoadConfig() (*Config, error) {
 
 	// Validate configuration values
 	applyOIDCEnvOverrides(&cfg)
+	applyLDAPEnvOverrides(&cfg)
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
 	applyAuthAndTenantDefaults(&cfg)
@@ -623,6 +646,27 @@ func ValidateConfig(cfg *Config) error {
 		if strings.TrimSpace(cfg.OIDCAuth.DiscoveryURL) == "" &&
 			(strings.TrimSpace(cfg.OIDCAuth.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.OIDCAuth.TokenEndpoint) == "") {
 			errs = append(errs, "oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled")
+		}
+	}
+
+	if cfg.LDAPAuth != nil && cfg.LDAPAuth.Enable {
+		if strings.TrimSpace(cfg.LDAPAuth.Host) == "" {
+			errs = append(errs, "ldap_auth.host is required when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.Port <= 0 {
+			errs = append(errs, "ldap_auth.port must be greater than 0 when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.UseSSL && cfg.LDAPAuth.StartTLS {
+			errs = append(errs, "ldap_auth.use_ssl and ldap_auth.start_tls cannot both be true")
+		}
+		if strings.TrimSpace(cfg.LDAPAuth.BaseDN) == "" {
+			errs = append(errs, "ldap_auth.base_dn is required when LDAP is enabled")
+		}
+		if strings.TrimSpace(cfg.LDAPAuth.UserFilter) == "" {
+			errs = append(errs, "ldap_auth.user_filter is required when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.UserInfoMapping == nil || strings.TrimSpace(cfg.LDAPAuth.UserInfoMapping.Email) == "" {
+			errs = append(errs, "ldap_auth.user_info_mapping.email is required when LDAP is enabled")
 		}
 	}
 
@@ -742,6 +786,80 @@ func applyOIDCEnvOverrides(cfg *Config) {
 	}
 	if cfg.OIDCAuth.DiscoveryURL == "" && cfg.OIDCAuth.IssuerURL != "" {
 		cfg.OIDCAuth.DiscoveryURL = strings.TrimRight(cfg.OIDCAuth.IssuerURL, "/") + "/.well-known/openid-configuration"
+	}
+}
+
+func applyLDAPEnvOverrides(cfg *Config) {
+	if cfg.LDAPAuth == nil {
+		cfg.LDAPAuth = &LDAPAuthConfig{}
+	}
+	if cfg.LDAPAuth.UserInfoMapping == nil {
+		cfg.LDAPAuth.UserInfoMapping = &LDAPUserInfoMapping{}
+	}
+
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_ENABLE")); value != "" {
+		cfg.LDAPAuth.Enable = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_HOST")); value != "" {
+		cfg.LDAPAuth.Host = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_PORT")); value != "" {
+		if port, err := strconv.Atoi(value); err == nil {
+			cfg.LDAPAuth.Port = port
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USE_SSL")); value != "" {
+		cfg.LDAPAuth.UseSSL = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_START_TLS")); value != "" {
+		cfg.LDAPAuth.StartTLS = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_SKIP_VERIFY")); value != "" {
+		cfg.LDAPAuth.SkipVerify = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BIND_DN")); value != "" {
+		cfg.LDAPAuth.BindDN = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BIND_PASSWORD")); value != "" {
+		cfg.LDAPAuth.BindPassword = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BASE_DN")); value != "" {
+		cfg.LDAPAuth.BaseDN = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USER_FILTER")); value != "" {
+		cfg.LDAPAuth.UserFilter = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USER_ID_ATTRIBUTE")); value != "" {
+		cfg.LDAPAuth.UserIDAttribute = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_PROVIDER_DISPLAY_NAME")); value != "" {
+		cfg.LDAPAuth.ProviderDisplayName = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_USER_INFO_MAPPING_USER_NAME")); value != "" {
+		cfg.LDAPAuth.UserInfoMapping.Username = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_USER_INFO_MAPPING_EMAIL")); value != "" {
+		cfg.LDAPAuth.UserInfoMapping.Email = value
+	}
+
+	if cfg.LDAPAuth.Port == 0 {
+		if cfg.LDAPAuth.UseSSL {
+			cfg.LDAPAuth.Port = 636
+		} else {
+			cfg.LDAPAuth.Port = 389
+		}
+	}
+	if cfg.LDAPAuth.ProviderDisplayName == "" {
+		cfg.LDAPAuth.ProviderDisplayName = "LDAP"
+	}
+	if cfg.LDAPAuth.UserIDAttribute == "" {
+		cfg.LDAPAuth.UserIDAttribute = "uid"
+	}
+	if cfg.LDAPAuth.UserInfoMapping.Username == "" {
+		cfg.LDAPAuth.UserInfoMapping.Username = "cn"
+	}
+	if cfg.LDAPAuth.UserInfoMapping.Email == "" {
+		cfg.LDAPAuth.UserInfoMapping.Email = "mail"
 	}
 }
 

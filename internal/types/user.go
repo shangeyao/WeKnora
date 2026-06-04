@@ -139,6 +139,17 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 }
 
+type LDAPLoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required,min=1"`
+}
+
+type LDAPConfigResponse struct {
+	Success             bool   `json:"success"`
+	Enabled             bool   `json:"enabled"`
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+}
+
 type OIDCAuthURLResponse struct {
 	Success             bool   `json:"success"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`

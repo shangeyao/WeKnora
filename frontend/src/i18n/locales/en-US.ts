@@ -1965,6 +1965,13 @@ export default {
   auth: {
     login: 'Login',
     logout: 'Logout',
+    account: 'Account',
+    accountPlaceholder: 'Enter email or LDAP account',
+    accountRequired: 'Please enter your account',
+    ldapLogin: 'Sign in with LDAP',
+    ldapLoginWithProvider: 'Sign in with {provider}',
+    loggingInWithLDAP: 'Signing in with LDAP...',
+    ldapLoginFailed: 'LDAP login failed',
     oidcLogin: 'Sign in with OIDC',
     oidcLoginWithProvider: 'Sign in with {provider}',
     redirectingToOIDC: 'Redirecting to identity provider...',
