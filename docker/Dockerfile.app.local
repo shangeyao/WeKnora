@@ -1,0 +1,5 @@
+# 将本地源码构建产物覆盖到官方运行时镜像。
+FROM wechatopenai/weknora-app:latest
+
+COPY --from=weknora-app-builder:local /app/WeKnora /app/WeKnora
+COPY --from=weknora-app-builder:local /app/migrations /app/migrations

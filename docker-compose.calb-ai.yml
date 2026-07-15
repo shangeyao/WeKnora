@@ -1,0 +1,616 @@
+# WeKnora 生产部署 — 从阿里云 ACR 拉取镜像（calb_ai/weknora）
+#
+# 前置条件：
+#   1. docker login crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com
+#   2. 准备 .env、config/config.yaml、skills/preloaded/
+#   3. 可选挂载：docker/openldap/、docker/searxng/settings.yml、misc/dex-config.yaml
+#
+# 启动：
+#   docker compose -f docker-compose.calb-ai.yml up -d
+#
+# 镜像前缀可通过 .env 覆盖：
+#   ACR_IMAGE_PREFIX=crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora
+#   WEKNORA_VERSION=latest
+name: weknora-calb-ai
+services:
+  frontend:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:ui-latest
+    container_name: WeKnora-frontend
+    ports:
+    - ${FRONTEND_PORT:-80}:80
+    environment:
+    - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+    - APP_HOST=${APP_HOST:-app}
+    - APP_PORT=${APP_BACKEND_PORT:-8080}
+    - APP_SCHEME=${APP_SCHEME:-http}
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+  app:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:app-latest
+    container_name: WeKnora-app
+    ports:
+    - ${APP_PORT:-8080}:8080
+    volumes:
+    - data-files:/data/files
+    - docreader-tmp:/tmp/docreader:ro
+    - ./config/config.yaml:/app/config/config.yaml
+    - ./skills/preloaded:/app/skills/preloaded
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8080/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    env_file:
+    - .env
+    environment:
+    - LOG_LEVEL=${LOG_LEVEL:-}
+    - COS_SECRET_ID=${COS_SECRET_ID:-}
+    - COS_SECRET_KEY=${COS_SECRET_KEY:-}
+    - COS_REGION=${COS_REGION:-}
+    - COS_BUCKET_NAME=${COS_BUCKET_NAME:-}
+    - COS_APP_ID=${COS_APP_ID:-}
+    - COS_PATH_PREFIX=${COS_PATH_PREFIX:-}
+    - COS_ENABLE_OLD_DOMAIN=${COS_ENABLE_OLD_DOMAIN:-}
+    - GIN_MODE=${GIN_MODE:-release}
+    - DISABLE_REGISTRATION=${DISABLE_REGISTRATION:-false}
+    - WEKNORA_AUTH_DEFAULT_TENANT_MODE=${WEKNORA_AUTH_DEFAULT_TENANT_MODE:-}
+    - WEKNORA_TENANT_SELF_SERVICE_CREATION_ENABLED=${WEKNORA_TENANT_SELF_SERVICE_CREATION_ENABLED:-}
+    - DB_DRIVER=${DB_DRIVER:-postgres}
+    - DB_HOST=${DB_HOST:-postgres}
+    - DB_PORT=${DB_PORT:-5432}
+    - DB_USER=${DB_USER:-}
+    - DB_PASSWORD=${DB_PASSWORD:-}
+    - DB_NAME=${DB_NAME:-}
+    - TZ=${TZ:-Asia/Shanghai}
+    - WEKNORA_LANGUAGE=${WEKNORA_LANGUAGE:-zh-CN}
+    - LANGFUSE_ENABLED=${LANGFUSE_ENABLED:-}
+    - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+    - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+    - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    - LANGFUSE_RELEASE=${LANGFUSE_RELEASE:-}
+    - LANGFUSE_ENVIRONMENT=${LANGFUSE_ENVIRONMENT:-}
+    - LANGFUSE_FLUSH_AT=${LANGFUSE_FLUSH_AT:-}
+    - LANGFUSE_FLUSH_INTERVAL=${LANGFUSE_FLUSH_INTERVAL:-}
+    - LANGFUSE_QUEUE_SIZE=${LANGFUSE_QUEUE_SIZE:-}
+    - LANGFUSE_REQUEST_TIMEOUT=${LANGFUSE_REQUEST_TIMEOUT:-}
+    - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-}
+    - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-}
+    - RETRIEVE_DRIVER=${RETRIEVE_DRIVER:-}
+    - ELASTICSEARCH_ADDR=${ELASTICSEARCH_ADDR:-}
+    - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-}
+    - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+    - ELASTICSEARCH_INDEX=${ELASTICSEARCH_INDEX:-}
+    - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+    - QDRANT_PORT=${QDRANT_PORT:-6334}
+    - QDRANT_COLLECTION=${QDRANT_COLLECTION:-weknora_embeddings}
+    - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+    - QDRANT_USE_TLS=${QDRANT_USE_TLS:-false}
+    - MILVUS_ADDRESS=${MILVUS_ADDRESS:-milvus:19530}
+    - MILVUS_COLLECTION=${MILVUS_COLLECTION:-weknora_embeddings}
+    - MILVUS_METRIC_TYPE=${MILVUS_METRIC_TYPE:-IP}
+    - DOCREADER_ADDR=${DOCREADER_ADDR:-docreader:50051}
+    - DOCREADER_TRANSPORT=${DOCREADER_TRANSPORT:-grpc}
+    - GRPC_TLS_ENABLED=${GRPC_TLS_ENABLED:-false}
+    - GRPC_TLS_CERT=${GRPC_TLS_CERT:-}
+    - GRPC_TLS_KEY=${GRPC_TLS_KEY:-}
+    - GRPC_TLS_CA=${GRPC_TLS_CA:-}
+    - GRPC_TLS_SERVER_NAME=${GRPC_TLS_SERVER_NAME:-}
+    - GRPC_AUTH_TOKEN=${GRPC_AUTH_TOKEN:-}
+    - WEAVIATE_HOST=${WEAVIATE_HOST:-weaviate:8080}
+    - WEAVIATE_GRPC_ADDRESS=${WEAVIATE_GRPC_ADDRESS:-weaviate:50051}
+    - WEAVIATE_SCHEME=${WEAVIATE_SCHEME:-http}
+    - WEAVIATE_AUTH_ENABLED=${WEAVIATE_AUTH_ENABLED:-false}
+    - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
+    - DORIS_ADDR=${DORIS_ADDR:-doris-fe:9030}
+    - DORIS_HTTP_PORT=${DORIS_HTTP_PORT:-8030}
+    - DORIS_DATABASE=${DORIS_DATABASE:-weknora}
+    - DORIS_USERNAME=${DORIS_USERNAME:-root}
+    - DORIS_PASSWORD=${DORIS_PASSWORD:-}
+    - DORIS_TABLE_PREFIX=${DORIS_TABLE_PREFIX:-weknora_embeddings}
+    - DORIS_COMPAT_MODE=${DORIS_COMPAT_MODE:-auto}
+    - STORAGE_TYPE=${STORAGE_TYPE:-}
+    - LOCAL_STORAGE_BASE_DIR=${LOCAL_STORAGE_BASE_DIR:-}
+    - AUTO_RECOVER_DIRTY=${AUTO_RECOVER_DIRTY:-true}
+    - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+    - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
+    - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+    - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-}
+    - OBS_ENDPOINT=${OBS_ENDPOINT:-}
+    - OBS_REGION=${OBS_REGION:-}
+    - OBS_ACCESS_KEY=${OBS_ACCESS_KEY:-}
+    - OBS_SECRET_KEY=${OBS_SECRET_KEY:-}
+    - OBS_BUCKET_NAME=${OBS_BUCKET_NAME:-}
+    - OBS_PATH_PREFIX=${OBS_PATH_PREFIX:-}
+    - OBS_PROXY_DOMAIN=${OBS_PROXY_DOMAIN:-}
+    - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    - STREAM_MANAGER_TYPE=${STREAM_MANAGER_TYPE:-}
+    - REDIS_ADDR=${REDIS_ADDR:-redis:6379}
+    - REDIS_USERNAME=${REDIS_USERNAME:-}
+    - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    - REDIS_DB=${REDIS_DB:-}
+    - REDIS_PREFIX=${REDIS_PREFIX:-}
+    - ENABLE_GRAPH_RAG=${ENABLE_GRAPH_RAG:-}
+    - NEO4J_ENABLE=${NEO4J_ENABLE:-}
+    - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
+    - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
+    - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
+    - TENANT_AES_KEY=${TENANT_AES_KEY:-}
+    - SYSTEM_AES_KEY=${SYSTEM_AES_KEY:-}
+    - SSRF_WHITELIST=${SSRF_WHITELIST:-}
+    - IMAGE_HOST_KEEP_URL=${IMAGE_HOST_KEEP_URL:-}
+    - SSRF_WHITELIST_EXTRA=${SSRF_WHITELIST_EXTRA:-searxng,qdrant,milvus,weaviate,doris-fe}
+    - CONCURRENCY_POOL_SIZE=${CONCURRENCY_POOL_SIZE:-5}
+    - JWT_SECRET=${JWT_SECRET:-}
+    - CRYPTO_MASTER_KEY=${CRYPTO_MASTER_KEY:-}
+    - CRYPTO_SALT=${CRYPTO_SALT:-}
+    - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+    - WEKNORA_SANDBOX_MODE=${WEKNORA_SANDBOX_MODE:-docker}
+    - WEKNORA_SANDBOX_TIMEOUT=${WEKNORA_SANDBOX_TIMEOUT:-60}
+    - WEKNORA_SANDBOX_DOCKER_IMAGE=${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:sandbox-${WEKNORA_VERSION:-latest}
+    - WEKNORA_AGENT_LLM_TIMEOUT=${WEKNORA_AGENT_LLM_TIMEOUT:-}
+    - WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT=${WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT:-}
+    - WEKNORA_TENANT_ENABLE_RBAC=${WEKNORA_TENANT_ENABLE_RBAC:-}
+    - WEKNORA_TENANT_MAX_OWNED_PER_USER=${WEKNORA_TENANT_MAX_OWNED_PER_USER:-}
+    - WEKNORA_TENANT_AUTO_CREATE_API_KEY=${WEKNORA_TENANT_AUTO_CREATE_API_KEY:-}
+    - WEKNORA_ASYNQ_CORE_CONCURRENCY=${WEKNORA_ASYNQ_CORE_CONCURRENCY:-8}
+    - WEKNORA_ASYNQ_POSTPROCESS_CONCURRENCY=${WEKNORA_ASYNQ_POSTPROCESS_CONCURRENCY:-2}
+    - WEKNORA_ASYNQ_ENRICHMENT_CONCURRENCY=${WEKNORA_ASYNQ_ENRICHMENT_CONCURRENCY:-12}
+    - WEKNORA_ASYNQ_MAINTENANCE_CONCURRENCY=${WEKNORA_ASYNQ_MAINTENANCE_CONCURRENCY:-4}
+    - WEKNORA_ASYNQ_SHARED_CONCURRENCY=${WEKNORA_ASYNQ_SHARED_CONCURRENCY:-6}
+    - WEKNORA_WIKI_ASYNQ_CONCURRENCY=${WEKNORA_WIKI_ASYNQ_CONCURRENCY:-8}
+    - WEKNORA_MODEL_MAX_CONCURRENCY=${WEKNORA_MODEL_MAX_CONCURRENCY:-32}
+    - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
+    - WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL=${WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL:-}
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      docreader:
+        condition: service_healthy
+      ldap-init:
+        condition: service_completed_successfully
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+    extra_hosts:
+    - host.docker.internal:host-gateway
+  docreader:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:docreader-latest
+    container_name: WeKnora-docreader
+    expose:
+    - '50051'
+    volumes:
+    - docreader-tmp:/tmp/docreader
+    environment:
+    - TZ=${TZ:-Asia/Shanghai}
+    - DOCREADER_IMAGE_OUTPUT_DIR=/tmp/docreader
+    - DOCREADER_PDF_FORCE_SCANNED=${DOCREADER_PDF_FORCE_SCANNED:-false}
+    - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-}
+    - DOCREADER_ODL_MAX_WORKERS=${DOCREADER_ODL_MAX_WORKERS:-1}
+    - DOCREADER_ODL_HYBRID=${DOCREADER_ODL_HYBRID:-off}
+    - DOCREADER_ODL_HYBRID_URL=${DOCREADER_ODL_HYBRID_URL:-http://odl-hybrid:5002}
+    - DOCREADER_ODL_HYBRID_MODE=${DOCREADER_ODL_HYBRID_MODE:-auto}
+    - DOCREADER_ODL_HYBRID_FALLBACK=${DOCREADER_ODL_HYBRID_FALLBACK:-false}
+    - DOCREADER_ODL_MARKDOWN_WITH_HTML=${DOCREADER_ODL_MARKDOWN_WITH_HTML:-false}
+    - DOCREADER_MARKITDOWN_MAX_WORKERS=${DOCREADER_MARKITDOWN_MAX_WORKERS:-1}
+    - DOCREADER_PDF_RENDER_MAX_WORKERS=${DOCREADER_PDF_RENDER_MAX_WORKERS:-1}
+    - DOCREADER_PDF_RENDER_DPI=${DOCREADER_PDF_RENDER_DPI:-200}
+    - DOCREADER_PDF_JPEG_QUALITY=${DOCREADER_PDF_JPEG_QUALITY:-90}
+    - GRPC_TLS_ENABLED=${GRPC_TLS_ENABLED:-false}
+    - GRPC_TLS_CERT=${GRPC_TLS_CERT:-}
+    - GRPC_TLS_KEY=${GRPC_TLS_KEY:-}
+    - GRPC_TLS_CA=${GRPC_TLS_CA:-}
+    - GRPC_AUTH_TOKEN=${GRPC_AUTH_TOKEN:-}
+    healthcheck:
+      test:
+      - CMD
+      - grpc_health_probe
+      - -addr=localhost:50051
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+    extra_hosts:
+    - host.docker.internal:host-gateway
+  postgres:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
+    container_name: WeKnora-postgres
+    environment:
+    - POSTGRES_USER=${DB_USER}
+    - POSTGRES_PASSWORD=${DB_PASSWORD}
+    - POSTGRES_DB=${DB_NAME}
+    volumes:
+    - postgres-data:/var/lib/postgresql/data
+    networks:
+    - WeKnora-network
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${DB_USER}
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 1m
+  redis:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:redis-7.0-alpine
+    container_name: WeKnora-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    restart: always
+    networks:
+    - WeKnora-network
+  searxng-init:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:busybox-1.36
+    container_name: WeKnora-searxng-init
+    command:
+    - sh
+    - -c
+    - cp /template/settings.yml /etc/searxng/settings.yml && chmod 0644 /etc/searxng/settings.yml
+    volumes:
+    - ./docker/searxng/settings.yml:/template/settings.yml:ro
+    - searxng_config:/etc/searxng
+    restart: 'no'
+    networks:
+    - WeKnora-network
+  searxng:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:searxng-latest
+    container_name: WeKnora-searxng
+    ports:
+    - ${SEARXNG_BIND:-127.0.0.1}:${SEARXNG_PORT:-8888}:8080
+    volumes:
+    - searxng_config:/etc/searxng
+    environment:
+    - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-8888}/
+    - INSTANCE_NAME=weknora-searxng
+    - SEARXNG_SECRET=${SEARXNG_SECRET:-weknora-default-searxng-secret-rotate-before-exposing-publicly}
+    cap_drop:
+    - ALL
+    cap_add:
+    - CHOWN
+    - SETGID
+    - SETUID
+    restart: unless-stopped
+    depends_on:
+      searxng-init:
+        condition: service_completed_successfully
+    networks:
+    - WeKnora-network
+  minio:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:minio-RELEASE.2025-09-07T16-13-09Z
+    container_name: WeKnora-minio
+    ports:
+    - ${MINIO_PORT:-9000}:9000
+    - ${MINIO_CONSOLE_PORT:-9001}:9001
+    environment:
+    - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-minioadmin}
+    - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+    command: server --console-address ":9001" /data
+    volumes:
+    - minio_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:9000/minio/health/live
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+    - WeKnora-network
+  neo4j:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:neo4j-2025.10.1
+    container_name: WeKnora-neo4j
+    volumes:
+    - neo4j-data:/data
+    environment:
+    - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-password}
+    - NEO4J_apoc_export_file_enabled=true
+    - NEO4J_apoc_import_file_enabled=true
+    - NEO4J_apoc_import_file_use__neo4j__config=true
+    - NEO4JLABS_PLUGINS=["apoc"]
+    ports:
+    - 7474:7474
+    - 7687:7687
+    restart: always
+    networks:
+    - WeKnora-network
+  qdrant:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:qdrant-v1.16.2
+    container_name: WeKnora-qdrant
+    ports:
+    - ${QDRANT_REST_PORT:-6333}:6333
+    - ${QDRANT_PORT:-6334}:6334
+    volumes:
+    - qdrant_data:/qdrant/storage
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+  dex:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:dex-latest
+    container_name: dex
+    ports:
+    - 5556:5556
+    volumes:
+    - ./misc/dex-config.yaml:/etc/dex/config.yaml
+    command:
+    - dex
+    - serve
+    - /etc/dex/config.yaml
+  langfuse-db-init:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
+    container_name: WeKnora-langfuse-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    entrypoint:
+    - sh
+    - -c
+    command:
+    - "set -e\necho \"[langfuse-db-init] ensuring database '${LANGFUSE_DB_NAME:-langfuse}' exists in WeKnora-postgres...\"\
+      \n# 先刷新现有库的 collation（镜像 ICU 2.36 与宿主 2.41 不匹配时必须做），否则 CREATE DATABASE 会失败\npsql -h postgres -U ${DB_USER} -d postgres\
+      \ -v ON_ERROR_STOP=0 -c \"ALTER DATABASE template1 REFRESH COLLATION VERSION;\" >/dev/null 2>&1 || true\npsql -h postgres\
+      \ -U ${DB_USER} -d postgres -v ON_ERROR_STOP=0 -c \"ALTER DATABASE postgres REFRESH COLLATION VERSION;\" >/dev/null\
+      \ 2>&1 || true\n# 幂等创建：已存在则跳过；不存在则从 template0 克隆（template0 永远不会有 collation 漂移）\nif psql -h postgres -U ${DB_USER} -d\
+      \ postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='${LANGFUSE_DB_NAME:-langfuse}'\" | grep -q 1; then\n  echo\
+      \ \"[langfuse-db-init] database '${LANGFUSE_DB_NAME:-langfuse}' already exists, skipping.\"\nelse\n  psql -h postgres\
+      \ -U ${DB_USER} -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"${LANGFUSE_DB_NAME:-langfuse}\\\" TEMPLATE template0;\"\
+      \n  echo \"[langfuse-db-init] database '${LANGFUSE_DB_NAME:-langfuse}' created.\"\nfi\necho \"[langfuse-db-init] done.\"\
+      \n"
+    networks:
+    - WeKnora-network
+    restart: 'no'
+  langfuse-clickhouse:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:clickhouse-24.8
+    container_name: WeKnora-langfuse-clickhouse
+    restart: unless-stopped
+    user: 101:101
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+    - langfuse_clickhouse_data:/var/lib/clickhouse
+    - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+    - WeKnora-network
+  langfuse-minio:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:minio-RELEASE.2025-09-07T16-13-09Z
+    container_name: WeKnora-langfuse-minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_USER:-langfuseminio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-langfuseminiosecret}
+    ports:
+    - ${LANGFUSE_MINIO_S3_PORT:-9100}:9000
+    - ${LANGFUSE_MINIO_CONSOLE_PORT:-9101}:9001
+    volumes:
+    - langfuse_minio_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - mc
+      - ready
+      - local
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    networks:
+    - WeKnora-network
+  langfuse-worker:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:langfuse-worker-3
+    container_name: WeKnora-langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    entrypoint:
+    - /bin/sh
+    - -ec
+    - '_enc() { node -e ''process.stdout.write(encodeURIComponent(process.argv[1]))'' "$$1"; }
+
+      DU=$$(_enc "$$_LF_DB_USER")
+
+      DP=$$(_enc "$$_LF_DB_PASSWORD")
+
+      RP=$$(_enc "$$_LF_REDIS_PASSWORD")
+
+      export DATABASE_URL="postgresql://$$DU:$$DP@postgres:5432/$$_LF_DB_NAME"
+
+      export REDIS_CONNECTION_STRING="redis://:$$RP@redis:6379/$$_LF_REDIS_DB"
+
+      unset _LF_DB_USER _LF_DB_PASSWORD _LF_REDIS_PASSWORD
+
+      exec dumb-init -- ./worker/entrypoint.sh node worker/dist/index.js
+
+      '
+    environment:
+      _LF_DB_USER: ${DB_USER}
+      _LF_DB_PASSWORD: ${DB_PASSWORD}
+      _LF_DB_NAME: ${LANGFUSE_DB_NAME:-langfuse}
+      _LF_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      _LF_REDIS_DB: ${LANGFUSE_REDIS_DB:-1}
+      SALT: ${LANGFUSE_SALT:-weknora-langfuse-dev-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-weknora-langfuse-dev-nextauth-secret-change-me}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: 'false'
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-langfuseminio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuseminiosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-langfuseminio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuseminiosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:9100}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+    networks:
+    - WeKnora-network
+  langfuse-web:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:langfuse-3
+    container_name: WeKnora-langfuse-web
+    restart: unless-stopped
+    depends_on:
+      langfuse-db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+    - ${LANGFUSE_WEB_PORT:-3000}:3000
+    entrypoint:
+    - /bin/sh
+    - -ec
+    - "_enc() { node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' \"$$1\"; }\nDU=$$(_enc \"$$_LF_DB_USER\"\
+      )\nDP=$$(_enc \"$$_LF_DB_PASSWORD\")\nRP=$$(_enc \"$$_LF_REDIS_PASSWORD\")\nexport DATABASE_URL=\"postgresql://$$DU:$$DP@postgres:5432/$$_LF_DB_NAME\"\
+      \nexport REDIS_CONNECTION_STRING=\"redis://:$$RP@redis:6379/$$_LF_REDIS_DB\"\nunset _LF_DB_USER _LF_DB_PASSWORD _LF_REDIS_PASSWORD\n\
+      if [ -n \"$$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION\" ]; then\n  exec dumb-init -- ./web/entrypoint.sh node --import dd-trace/initialize.mjs\
+      \ ./web/server.js --keepAliveTimeout 110000\nelse\n  exec dumb-init -- ./web/entrypoint.sh node ./web/server.js --keepAliveTimeout\
+      \ 110000\nfi\n"
+    environment:
+      _LF_DB_USER: ${DB_USER}
+      _LF_DB_PASSWORD: ${DB_PASSWORD}
+      _LF_DB_NAME: ${LANGFUSE_DB_NAME:-langfuse}
+      _LF_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      _LF_REDIS_DB: ${LANGFUSE_REDIS_DB:-1}
+      SALT: ${LANGFUSE_SALT:-weknora-langfuse-dev-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-weknora-langfuse-dev-nextauth-secret-change-me}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: 'false'
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-langfuseminio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuseminiosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-langfuseminio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuseminiosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:9100}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    networks:
+    - WeKnora-network
+  mcp:
+    container_name: WeKnora-mcp
+    ports:
+    - ${MCP_PORT:-8082}:8000
+    environment:
+    - WEKNORA_BASE_URL=http://app:8080/api/v1
+    - WEKNORA_API_KEY=${WEKNORA_API_KEY:-}
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:mcp-latest
+  openldap:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:openldap-1.5.0
+    container_name: WeKnora-openldap
+    environment:
+      LDAP_ORGANISATION: Example Inc
+      LDAP_DOMAIN: example.com
+      LDAP_ADMIN_PASSWORD: adminpassword
+      LDAP_CONFIG_PASSWORD: configpassword
+      LDAP_TLS: 'false'
+    expose:
+    - '389'
+    networks:
+    - WeKnora-network
+    restart: unless-stopped
+  ldap-init:
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:openldap-1.5.0
+    container_name: WeKnora-ldap-init
+    depends_on:
+      openldap:
+        condition: service_started
+    volumes:
+    - ./docker/openldap/custom:/ldif:ro
+    - ./docker/openldap/seed.sh:/seed.sh:ro
+    environment:
+      LDAP_HOST: openldap
+      LDAP_ADMIN_PASSWORD: adminpassword
+      LDIF_PATH: /ldif/50-weknora.ldif
+    entrypoint:
+    - /bin/bash
+    - /seed.sh
+    networks:
+    - WeKnora-network
+    restart: 'no'
+networks:
+  WeKnora-network:
+    driver: bridge
+volumes:
+  postgres-data: null
+  data-files: null
+  docreader-tmp: null
+  minio_data: null
+  neo4j-data: null
+  qdrant_data: null
+  langfuse_clickhouse_data: null
+  langfuse_clickhouse_logs: null
+  langfuse_minio_data: null
+  searxng_config: null
