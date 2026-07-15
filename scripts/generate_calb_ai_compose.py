@@ -11,6 +11,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ACR = "crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora"
 VER = "latest"
+PLATFORM = "linux/amd64"
 
 IMAGE_MAP = {
     "wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}": f"{ACR}:ui-{VER}",
@@ -67,6 +68,8 @@ HEADER = f"""# WeKnora 生产部署 — 从阿里云 ACR 拉取镜像（calb_ai/
 # 镜像前缀可通过 .env 覆盖：
 #   ACR_IMAGE_PREFIX={ACR}
 #   WEKNORA_VERSION={VER}
+#
+# 所有服务默认 platform: {PLATFORM}（与 x86 服务器部署一致）
 """
 
 
@@ -165,6 +168,7 @@ def main() -> None:
     app["environment"] = new_env
 
     for service in out["services"].values():
+        service["platform"] = PLATFORM
         image = service.get("image", "")
         if image.startswith(ACR):
             tag = image.split(":", 1)[1]

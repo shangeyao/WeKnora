@@ -11,6 +11,8 @@
 # 镜像前缀可通过 .env 覆盖：
 #   ACR_IMAGE_PREFIX=crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora
 #   WEKNORA_VERSION=latest
+#
+# 所有服务默认 platform: linux/amd64（与 x86 服务器部署一致）
 name: weknora-calb-ai
 services:
   frontend:
@@ -29,6 +31,7 @@ services:
     networks:
     - WeKnora-network
     restart: unless-stopped
+    platform: linux/amd64
   app:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:app-latest
     container_name: WeKnora-app
@@ -184,6 +187,7 @@ services:
     restart: unless-stopped
     extra_hosts:
     - host.docker.internal:host-gateway
+    platform: linux/amd64
   docreader:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:docreader-latest
     container_name: WeKnora-docreader
@@ -225,6 +229,7 @@ services:
     restart: unless-stopped
     extra_hosts:
     - host.docker.internal:host-gateway
+    platform: linux/amd64
   postgres:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
     container_name: WeKnora-postgres
@@ -246,6 +251,7 @@ services:
       start_period: 30s
     restart: unless-stopped
     stop_grace_period: 1m
+    platform: linux/amd64
   redis:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:redis-7.0-alpine
     container_name: WeKnora-redis
@@ -253,6 +259,7 @@ services:
     restart: always
     networks:
     - WeKnora-network
+    platform: linux/amd64
   searxng-init:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:busybox-1.36
     container_name: WeKnora-searxng-init
@@ -266,6 +273,7 @@ services:
     restart: 'no'
     networks:
     - WeKnora-network
+    platform: linux/amd64
   searxng:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:searxng-latest
     container_name: WeKnora-searxng
@@ -289,6 +297,7 @@ services:
         condition: service_completed_successfully
     networks:
     - WeKnora-network
+    platform: linux/amd64
   minio:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:minio-RELEASE.2025-09-07T16-13-09Z
     container_name: WeKnora-minio
@@ -312,6 +321,7 @@ services:
       retries: 3
     networks:
     - WeKnora-network
+    platform: linux/amd64
   neo4j:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:neo4j-2025.10.1
     container_name: WeKnora-neo4j
@@ -329,6 +339,7 @@ services:
     restart: always
     networks:
     - WeKnora-network
+    platform: linux/amd64
   qdrant:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:qdrant-v1.16.2
     container_name: WeKnora-qdrant
@@ -340,6 +351,7 @@ services:
     networks:
     - WeKnora-network
     restart: unless-stopped
+    platform: linux/amd64
   dex:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:dex-latest
     container_name: dex
@@ -351,6 +363,7 @@ services:
     - dex
     - serve
     - /etc/dex/config.yaml
+    platform: linux/amd64
   langfuse-db-init:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
     container_name: WeKnora-langfuse-db-init
@@ -376,6 +389,7 @@ services:
     networks:
     - WeKnora-network
     restart: 'no'
+    platform: linux/amd64
   langfuse-clickhouse:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:clickhouse-24.8
     container_name: WeKnora-langfuse-clickhouse
@@ -396,6 +410,7 @@ services:
       start_period: 10s
     networks:
     - WeKnora-network
+    platform: linux/amd64
   langfuse-minio:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:minio-RELEASE.2025-09-07T16-13-09Z
     container_name: WeKnora-langfuse-minio
@@ -421,6 +436,7 @@ services:
       retries: 5
     networks:
     - WeKnora-network
+    platform: linux/amd64
   langfuse-worker:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:langfuse-worker-3
     container_name: WeKnora-langfuse-worker
@@ -487,6 +503,7 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
     networks:
     - WeKnora-network
+    platform: linux/amd64
   langfuse-web:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:langfuse-3
     container_name: WeKnora-langfuse-web
@@ -553,6 +570,7 @@ services:
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
     networks:
     - WeKnora-network
+    platform: linux/amd64
   mcp:
     container_name: WeKnora-mcp
     ports:
@@ -567,6 +585,7 @@ services:
     - WeKnora-network
     restart: unless-stopped
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:mcp-latest
+    platform: linux/amd64
   openldap:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:openldap-1.5.0
     container_name: WeKnora-openldap
@@ -581,6 +600,7 @@ services:
     networks:
     - WeKnora-network
     restart: unless-stopped
+    platform: linux/amd64
   ldap-init:
     image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:openldap-1.5.0
     container_name: WeKnora-ldap-init
@@ -600,6 +620,7 @@ services:
     networks:
     - WeKnora-network
     restart: 'no'
+    platform: linux/amd64
 networks:
   WeKnora-network:
     driver: bridge

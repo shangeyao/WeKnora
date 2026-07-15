@@ -18,12 +18,14 @@
 #   SKIP_BUILD=1   skip local image builds
 #   SKIP_PULL=1    skip pulling third-party images
 #   LIST_ONLY=1    print mapping and exit
+#   DOCKER_PLATFORM default: linux/amd64 (target server arch; use on Apple Silicon Macs)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 ACR_REGISTRY="${ACR_REGISTRY:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-calb_ai}"
 ACR_REPO="${ACR_REPO:-weknora}"
@@ -87,15 +89,15 @@ build_local_images() {
   echo "[acr] building frontend dist (local UI changes) ..."
   ./scripts/build_frontend_dist.sh
 
-  echo "[acr] building local app (LDAP) ..."
-  docker build --target builder -f docker/Dockerfile.app -t weknora-app-builder:local .
-  docker build -f docker/Dockerfile.app.local -t weknora-app:local .
+  echo "[acr] building local app (LDAP) for ${DOCKER_PLATFORM} ..."
+  docker build --platform "${DOCKER_PLATFORM}" --target builder -f docker/Dockerfile.app -t weknora-app-builder:local .
+  docker build --platform "${DOCKER_PLATFORM}" -f docker/Dockerfile.app.local -t weknora-app:local .
 
-  echo "[acr] building local frontend image ..."
-  FRONTEND_PORT="${FRONTEND_PORT}" "${COMPOSE[@]}" build frontend
+  echo "[acr] building local frontend image for ${DOCKER_PLATFORM} ..."
+  DOCKER_DEFAULT_PLATFORM="${DOCKER_PLATFORM}" FRONTEND_PORT="${FRONTEND_PORT}" "${COMPOSE[@]}" build frontend
 
-  echo "[acr] building mcp image ..."
-  docker build -t weknora-mcp:local ./mcp-server
+  echo "[acr] building mcp image for ${DOCKER_PLATFORM} ..."
+  docker build --platform "${DOCKER_PLATFORM}" -t weknora-mcp:local ./mcp-server
 }
 
 pull_third_party_images() {
@@ -104,16 +106,23 @@ pull_third_party_images() {
     return
   fi
 
-  local entry src tag _note
-  echo "[acr] pulling third-party images ..."
+  local entry src tag _note target_arch
+  target_arch="${DOCKER_PLATFORM#linux/}"
+  echo "[acr] pulling third-party images for ${DOCKER_PLATFORM} ..."
   for entry in "${IMAGE_MAP[@]}"; do
     IFS='|' read -r src tag _note <<<"$entry"
     if docker image inspect "$src" >/dev/null 2>&1; then
-      echo "  skip pull (exists): $src"
-      continue
+      local arch
+      arch="$(docker image inspect "$src" --format '{{.Architecture}}')"
+      if [[ "$arch" == "$target_arch" ]]; then
+        echo "  skip pull (exists, ${arch}): $src"
+        continue
+      fi
+      echo "  re-pull (${arch} -> ${target_arch}): $src"
+    else
+      echo "  pull (${DOCKER_PLATFORM}): $src"
     fi
-    echo "  pull: $src"
-    docker pull "$src" || echo "WARN: pull failed for $src" >&2
+    docker pull --platform "${DOCKER_PLATFORM}" "$src" || echo "WARN: pull failed for $src" >&2
   done
 }
 
@@ -128,7 +137,9 @@ push_all_images() {
       continue
     fi
     dst="$(to_acr_image "$tag")"
-    echo "  tag: $src -> $dst"
+    local arch
+    arch="$(docker image inspect "$src" --format '{{.Architecture}}')"
+    echo "  tag (${arch}): $src -> $dst"
     docker tag "$src" "$dst"
     echo "  push: $dst"
     if docker push "$dst"; then
