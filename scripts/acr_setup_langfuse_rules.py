@@ -9,10 +9,10 @@ import sys
 import time
 
 RULES = [
-    ("docker/acr-import", "langfuse-web.Dockerfile", "langfuse-3"),
-    ("docker/acr-import", "langfuse-worker.Dockerfile", "langfuse-worker-3"),
-    ("docker/acr-import", "clickhouse.Dockerfile", "clickhouse-24.8"),
-    ("docker/acr-import", "langfuse-minio.Dockerfile", "minio-RELEASE.2025-09-07T16-13-09Z"),
+    ("docker", "Dockerfile", "langfuse-3"),
+    ("docker", "Dockerfile", "langfuse-worker-3"),
+    ("docker", "Dockerfile", "clickhouse-24.8"),
+    ("docker", "Dockerfile", "minio-RELEASE.2025-09-07T16-13-09Z"),
 ]
 
 

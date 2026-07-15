@@ -9,25 +9,27 @@ ACR_NAMESPACE="${ACR_NAMESPACE:-calb_ai}"
 ACR_REPO="${ACR_REPO:-weknora}"
 GITHUB_REPO="${GITHUB_REPO:-shangeyao/WeKnora}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
+DOCKERFILE="docker/Dockerfile"
 
 RULES=(
-  "docker/acr-import/langfuse-web.Dockerfile|langfuse-3|langfuse-web"
-  "docker/acr-import/langfuse-worker.Dockerfile|langfuse-worker-3|langfuse-worker"
-  "docker/acr-import/clickhouse.Dockerfile|clickhouse-24.8|langfuse-clickhouse"
-  "docker/acr-import/langfuse-minio.Dockerfile|minio-RELEASE.2025-09-07T16-13-09Z|langfuse-minio"
+  "langfuse|langfuse-3|langfuse-web"
+  "langfuse-worker|langfuse-worker-3|langfuse-worker"
+  "clickhouse|clickhouse-24.8|langfuse-clickhouse"
+  "minio|minio-RELEASE.2025-09-07T16-13-09Z|langfuse-minio"
 )
 
 list_rules() {
-  local entry dockerfile tag note
-  printf "%-4s %-45s %-35s %s\n" "#" "Dockerfile" "输出 Tag" "Compose 服务"
+  local entry target tag note
+  printf "%-4s %-20s %-35s %s\n" "#" "Target" "输出 Tag" "Compose 服务"
   printf "%s\n" "---------------------------------------------------------------------------------------------"
   local i=1
   for entry in "${RULES[@]}"; do
-    IFS='|' read -r dockerfile tag note <<<"$entry"
-    printf "%-4s %-45s %-35s %s\n" "$i" "$dockerfile" "$tag" "$note"
+    IFS='|' read -r target tag note <<<"$entry"
+    printf "%-4s %-20s %-35s %s\n" "$i" "$target" "$tag" "$note"
     i=$((i + 1))
   done
   echo
+  echo "Dockerfile: ${DOCKERFILE}"
   echo "目标仓库: ${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPO}:<tag>"
 }
 
@@ -45,7 +47,8 @@ print_guide() {
 2. 左侧「构建」→「添加规则」
 3. 配置：
    - 代码源分支：${GITHUB_BRANCH}
-   - Dockerfile 路径：见下方表格
+   - Dockerfile：${DOCKERFILE}（目录 docker/ 文件 Dockerfile）
+   - 构建阶段 (target)：见下方表格
    - 镜像版本（Tag）：见下方表格
    - 开启「海外机器构建」/「海外加速」（必须）
 4. 保存后点击「立即构建」，等待成功（通常几分钟）

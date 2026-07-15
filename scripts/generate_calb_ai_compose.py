@@ -4,34 +4,39 @@
 from __future__ import annotations
 
 import copy
+import os
+import re
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ACR = "crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora"
-VER = "latest"
+VER = os.environ.get("WEKNORA_VERSION", "latest")
 PLATFORM = "linux/amd64"
 
+# Upstream docker-compose.yml image -> ACR tag (fixed third-party versions).
 IMAGE_MAP = {
-    "wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}": f"{ACR}:ui-{VER}",
-    "wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}": f"{ACR}:app-{VER}",
-    "weknora-app:local": f"{ACR}:app-{VER}",
-    "wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}": f"{ACR}:docreader-{VER}",
-    "wechatopenai/weknora-sandbox:${WEKNORA_VERSION:-latest}": f"{ACR}:sandbox-{VER}",
-    "paradedb/paradedb:v0.22.2-pg17": f"{ACR}:paradedb-v0.22.2-pg17",
-    "redis:7.0-alpine": f"{ACR}:redis-7.0-alpine",
-    "osixia/openldap:1.5.0": f"{ACR}:openldap-1.5.0",
-    "busybox:1.36": f"{ACR}:busybox-1.36",
-    "searxng/searxng:latest": f"{ACR}:searxng-latest",
-    "minio/minio:RELEASE.2025-09-07T16-13-09Z": f"{ACR}:minio-RELEASE.2025-09-07T16-13-09Z",
-    "neo4j:2025.10.1": f"{ACR}:neo4j-2025.10.1",
-    "qdrant/qdrant:v1.16.2": f"{ACR}:qdrant-v1.16.2",
-    "dexidp/dex:latest": f"{ACR}:dex-latest",
-    "clickhouse/clickhouse-server:24.8": f"{ACR}:clickhouse-24.8",
-    "langfuse/langfuse:3": f"{ACR}:langfuse-3",
-    "langfuse/langfuse-worker:3": f"{ACR}:langfuse-worker-3",
+    "wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}": f"ui-{VER}",
+    "wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}": f"app-{VER}",
+    "weknora-app:local": f"app-{VER}",
+    "wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}": f"docreader-{VER}",
+    "wechatopenai/weknora-sandbox:${WEKNORA_VERSION:-latest}": f"sandbox-{VER}",
+    "paradedb/paradedb:v0.22.2-pg17": "paradedb-v0.22.2-pg17",
+    "redis:7.0-alpine": "redis-7.0-alpine",
+    "busybox:1.36": "busybox-1.36",
+    "searxng/searxng:latest": "searxng-latest",
+    "minio/minio:RELEASE.2025-09-07T16-13-09Z": "minio-RELEASE.2025-09-07T16-13-09Z",
+    "neo4j:2025.10.1": "neo4j-2025.10.1",
+    "qdrant/qdrant:v1.16.2": "qdrant-v1.16.2",
+    "dexidp/dex:latest": "dex-latest",
+    "clickhouse/clickhouse-server:24.8": "clickhouse-24.8",
+    "langfuse/langfuse:3": "langfuse-3",
+    "langfuse/langfuse-worker:3": "langfuse-worker-3",
 }
+
+# ACR tags that follow upstream WEKNORA_VERSION (not pinned in compose output).
+WEKNORA_VERSIONED = re.compile(r"^(app|ui|docreader|sandbox|mcp)-")
 
 INCLUDE = {
     "frontend",
@@ -39,8 +44,6 @@ INCLUDE = {
     "docreader",
     "postgres",
     "redis",
-    "openldap",
-    "ldap-init",
     "searxng-init",
     "searxng",
     "minio",
@@ -60,7 +63,7 @@ HEADER = f"""# WeKnora 生产部署 — 从阿里云 ACR 拉取镜像（calb_ai/
 # 前置条件：
 #   1. docker login {ACR.split('/')[0]}
 #   2. 准备 .env、config/config.yaml、skills/preloaded/
-#   3. 可选挂载：docker/openldap/、docker/searxng/settings.yml、misc/dex-config.yaml
+#   3. 可选挂载：docker/searxng/settings.yml、misc/dex-config.yaml
 #
 # 启动：
 #   docker compose -f docker-compose.calb-ai.yml up -d
@@ -75,15 +78,24 @@ HEADER = f"""# WeKnora 生产部署 — 从阿里云 ACR 拉取镜像（calb_ai/
 
 def resolve_image(img: str) -> str:
     if img in IMAGE_MAP:
-        return IMAGE_MAP[img]
+        return f"{ACR}:{IMAGE_MAP[img]}"
     for key, value in IMAGE_MAP.items():
         if key.replace("${WEKNORA_VERSION:-latest}", "latest") == img.replace(
             "${WEKNORA_VERSION:-latest}", "latest"
         ):
-            return value
+            return f"{ACR}:{value}"
     if img and not img.startswith(ACR):
         raise ValueError(f"unmapped image: {img}")
     return img
+
+
+def acr_image_ref(tag: str) -> str:
+    """Compose image ref: WeKnora components honor WEKNORA_VERSION like upstream."""
+    match = WEKNORA_VERSIONED.match(tag)
+    if match:
+        component = match.group(1)
+        return f"${{ACR_IMAGE_PREFIX:-{ACR}}}:{component}-${{WEKNORA_VERSION:-{VER}}}"
+    return f"${{ACR_IMAGE_PREFIX:-{ACR}}}:{tag}"
 
 
 def strip_build(service: dict) -> None:
@@ -113,44 +125,7 @@ def main() -> None:
             item["image"] = f"{ACR}:mcp-{VER}"
         out["services"][name] = item
 
-    openldap = {
-        "image": f"{ACR}:openldap-1.5.0",
-        "container_name": "WeKnora-openldap",
-        "environment": {
-            "LDAP_ORGANISATION": "Example Inc",
-            "LDAP_DOMAIN": "example.com",
-            "LDAP_ADMIN_PASSWORD": "adminpassword",
-            "LDAP_CONFIG_PASSWORD": "configpassword",
-            "LDAP_TLS": "false",
-        },
-        "expose": ["389"],
-        "networks": ["WeKnora-network"],
-        "restart": "unless-stopped",
-    }
-    ldap_init = {
-        "image": f"{ACR}:openldap-1.5.0",
-        "container_name": "WeKnora-ldap-init",
-        "depends_on": {"openldap": {"condition": "service_started"}},
-        "volumes": [
-            "./docker/openldap/custom:/ldif:ro",
-            "./docker/openldap/seed.sh:/seed.sh:ro",
-        ],
-        "environment": {
-            "LDAP_HOST": "openldap",
-            "LDAP_ADMIN_PASSWORD": "adminpassword",
-            "LDIF_PATH": "/ldif/50-weknora.ldif",
-        },
-        "entrypoint": ["/bin/bash", "/seed.sh"],
-        "networks": ["WeKnora-network"],
-        "restart": "no",
-    }
-    out["services"]["openldap"] = openldap
-    out["services"]["ldap-init"] = ldap_init
-
     app = out["services"]["app"]
-    deps = app.setdefault("depends_on", {})
-    deps["ldap-init"] = {"condition": "service_completed_successfully"}
-
     env = app.setdefault("environment", [])
     sandbox_env = (
         f"WEKNORA_SANDBOX_DOCKER_IMAGE=${{ACR_IMAGE_PREFIX:-{ACR}}}:sandbox-${{WEKNORA_VERSION:-{VER}}}"
@@ -170,9 +145,9 @@ def main() -> None:
     for service in out["services"].values():
         service["platform"] = PLATFORM
         image = service.get("image", "")
-        if image.startswith(ACR):
+        if image.startswith(f"{ACR}:"):
             tag = image.split(":", 1)[1]
-            service["image"] = f"${{ACR_IMAGE_PREFIX:-{ACR}}}:{tag}"
+            service["image"] = acr_image_ref(tag)
 
     volume_names: set[str] = set()
     for service in out["services"].values():
