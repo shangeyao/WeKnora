@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# Guide: import Langfuse stack images into ACR via overseas build (no local docker pull).
-#
-# ACR personal edition cannot sync Docker Hub directly. Use console build with
-# docker/acr-import/*.Dockerfile — ACR pulls on overseas builders (amd64) and
-# pushes to your repository.
-#
-# Usage:
-#   ./scripts/acr_import_langfuse.sh          # print console steps
-#   ./scripts/acr_import_langfuse.sh --list   # list build rules to create
+# Langfuse-only ACR build rules (subset of full profile).
+# For all --profile full images, use: ./scripts/acr_import_full_profile.sh
 
 set -euo pipefail
 

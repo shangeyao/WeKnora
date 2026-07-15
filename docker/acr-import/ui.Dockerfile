@@ -1,0 +1,19 @@
+# WeKnora UI — multi-stage build for ACR overseas build (linux/amd64).
+FROM node:20-alpine AS builder
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+ARG VITE_FRONTEND_COMMIT=unknown
+ENV VITE_IS_DOCKER=true
+ENV VITE_FRONTEND_COMMIT=${VITE_FRONTEND_COMMIT}
+RUN npm run build
+
+FROM nginx:stable-alpine
+COPY --from=builder /build/dist /usr/share/nginx/html
+COPY frontend/nginx.conf /etc/nginx/templates/default.conf.template
+COPY frontend/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+ENV MAX_FILE_SIZE_MB=50
+EXPOSE 80
+ENTRYPOINT ["/docker-entrypoint.sh"]
