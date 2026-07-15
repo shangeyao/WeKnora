@@ -327,8 +327,11 @@ type LDAPUserInfoMapping struct {
 }
 
 type LDAPAuthConfig struct {
-	Enable              bool                 `yaml:"enable"                json:"enable"`
-	Host                string               `yaml:"host"                  json:"host"`
+	Enable            bool `yaml:"enable" json:"enable"`
+	// DisableLocalLogin blocks POST /auth/login when LDAP is the sole
+	// identity source. Nil/absent defaults to true whenever enable is true.
+	DisableLocalLogin *bool                `yaml:"disable_local_login" json:"disable_local_login"`
+	Host              string               `yaml:"host"                  json:"host"`
 	Port                int                  `yaml:"port"                  json:"port"`
 	UseSSL              bool                 `yaml:"use_ssl"               json:"use_ssl"`
 	StartTLS            bool                 `yaml:"start_tls"             json:"start_tls"`
@@ -340,6 +343,25 @@ type LDAPAuthConfig struct {
 	UserIDAttribute     string               `yaml:"user_id_attribute"     json:"user_id_attribute"`
 	ProviderDisplayName string               `yaml:"provider_display_name" json:"provider_display_name"`
 	UserInfoMapping     *LDAPUserInfoMapping `yaml:"user_info_mapping"     json:"user_info_mapping"`
+}
+
+// LocalLoginDisabled reports whether password login must be rejected because
+// LDAP is the configured identity source. When LDAP is off, local login stays
+// available. When LDAP is on and disable_local_login is unset, local login is
+// disabled by default.
+func (c *LDAPAuthConfig) LocalLoginDisabled() bool {
+	if c == nil || !c.Enable {
+		return false
+	}
+	if c.DisableLocalLogin == nil {
+		return true
+	}
+	return *c.DisableLocalLogin
+}
+
+// LocalLoginEnabled is the inverse of LocalLoginDisabled for public config APIs.
+func (c *LDAPAuthConfig) LocalLoginEnabled() bool {
+	return !c.LocalLoginDisabled()
 }
 
 // PromptTemplateI18n holds localized name and description for a prompt template.
@@ -854,6 +876,10 @@ func applyLDAPEnvOverrides(cfg *Config) {
 	}
 	if cfg.LDAPAuth.UserIDAttribute == "" {
 		cfg.LDAPAuth.UserIDAttribute = "uid"
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_DISABLE_LOCAL_LOGIN")); value != "" {
+		v := strings.EqualFold(value, "true")
+		cfg.LDAPAuth.DisableLocalLogin = &v
 	}
 	if cfg.LDAPAuth.UserInfoMapping.Username == "" {
 		cfg.LDAPAuth.UserInfoMapping.Username = "cn"

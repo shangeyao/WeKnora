@@ -76,6 +76,7 @@ export interface LDAPLoginRequest {
 export interface LDAPConfigResponse {
   success: boolean
   enabled: boolean
+  local_login_enabled?: boolean
   provider_display_name?: string
   message?: string
 }

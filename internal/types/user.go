@@ -147,6 +147,7 @@ type LDAPLoginRequest struct {
 type LDAPConfigResponse struct {
 	Success             bool   `json:"success"`
 	Enabled             bool   `json:"enabled"`
+	LocalLoginEnabled   bool   `json:"local_login_enabled"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
 }
 

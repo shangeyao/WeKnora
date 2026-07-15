@@ -211,6 +211,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	logger.Info(ctx, "Start user login")
 
+	if h.configInfo != nil && h.configInfo.LDAPAuth != nil && h.configInfo.LDAPAuth.LocalLoginDisabled() {
+		logger.Warn(ctx, "Local password login rejected: LDAP is the configured identity source")
+		appErr := errors.NewForbiddenError("Local password login is disabled; use LDAP")
+		c.Error(appErr)
+		return
+	}
+
 	var req types.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to parse login request parameters", err)
@@ -261,15 +268,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) GetLDAPConfig(c *gin.Context) {
 	providerDisplayName := ""
 	enabled := false
+	localLoginEnabled := true
 
 	if h.configInfo != nil && h.configInfo.LDAPAuth != nil {
 		enabled = h.configInfo.LDAPAuth.Enable
 		providerDisplayName = strings.TrimSpace(h.configInfo.LDAPAuth.ProviderDisplayName)
+		localLoginEnabled = h.configInfo.LDAPAuth.LocalLoginEnabled()
 	}
 
 	c.JSON(http.StatusOK, &types.LDAPConfigResponse{
 		Success:             true,
 		Enabled:             enabled,
+		LocalLoginEnabled:   localLoginEnabled,
 		ProviderDisplayName: providerDisplayName,
 	})
 }

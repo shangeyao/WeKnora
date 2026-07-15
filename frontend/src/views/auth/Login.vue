@@ -184,20 +184,20 @@
           </div>
 
           <div class="form-content">
-            <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical">
-              <t-form-item :label="loginAccountLabel" name="email">
-                <t-input v-model="formData.email" :placeholder="loginAccountPlaceholder" type="text"
+            <t-form ref="formRef" :data="formData" :rules="loginFormRules" @submit="handleLoginSubmit" layout="vertical">
+              <t-form-item :label="$t('auth.account')" name="email">
+                <t-input v-model="formData.email" type="text"
                   autocomplete="email" size="large" :disabled="loading || ldapLoading" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
-                <t-input v-model="formData.password" :placeholder="$t('auth.passwordPlaceholder')" type="password"
+                <t-input v-model="formData.password" type="password"
                   autocomplete="current-password" size="large" :disabled="loading || ldapLoading" @enter="handleLogin" />
               </t-form-item>
 
-              <t-button type="submit" theme="primary" size="large" block :loading="loading" :disabled="ldapLoading"
+              <t-button type="submit" theme="primary" size="large" block :loading="loading || ldapLoading" :disabled="ldapOnlyLogin ? oidcLoading : ldapLoading"
                 class="submit-button">
-                {{ loading ? $t('auth.loggingIn') : $t('auth.login') }}
+                {{ (loading || ldapLoading) ? $t('auth.loggingIn') : $t('auth.login') }}
               </t-button>
 
               <div class="register-cta" v-if="registrationEnabled">
@@ -210,11 +210,11 @@
                 </t-button>
               </div>
 
-              <div v-if="ldapEnabled || oidcEnabled" class="oidc-divider">
+              <div v-if="oidcEnabled && (!ldapEnabled || ldapLocalLoginEnabled || ldapOnlyLogin)" class="oidc-divider">
                 <span>{{ $t('auth.orContinueWith') }}</span>
               </div>
 
-              <t-button v-if="ldapEnabled" theme="default" size="large" block :loading="ldapLoading"
+              <t-button v-if="ldapEnabled && ldapLocalLoginEnabled" theme="default" size="large" block :loading="ldapLoading"
                 :disabled="loading || oidcLoading" class="oidc-button" @click="handleLDAPLogin">
                 {{ ldapLoading ? $t('auth.loggingInWithLDAP') : ldapLoginText }}
               </t-button>
@@ -406,6 +406,7 @@ const oidcLoading = ref(false)
 const isRegisterMode = ref(false)
 const showLanguageMenu = ref(false)
 const ldapEnabled = ref(false)
+const ldapLocalLoginEnabled = ref(true)
 const ldapProviderName = ref('')
 const oidcEnabled = ref(false)
 const oidcProviderName = ref('')
@@ -440,14 +441,13 @@ const oidcLoginText = computed(() => {
   }
   return t('auth.oidcLogin')
 })
+const ldapOnlyLogin = computed(() => ldapEnabled.value && !ldapLocalLoginEnabled.value)
 const ldapLoginText = computed(() => {
   if (ldapProviderName.value) {
     return t('auth.ldapLoginWithProvider', { provider: ldapProviderName.value })
   }
   return t('auth.ldapLogin')
 })
-const loginAccountLabel = computed(() => ldapEnabled.value ? t('auth.account') : t('auth.email'))
-const loginAccountPlaceholder = computed(() => ldapEnabled.value ? t('auth.accountPlaceholder') : t('auth.emailPlaceholder'))
 const currentLangOption = computed(() => languageOptions.find(l => l.value === currentLanguage.value))
 
 // Login form data
@@ -465,19 +465,27 @@ const registerData = reactive<{ [key: string]: any }>({
 })
 
 // Login form validation rules
-const formRules = computed(() => ({
-  email: [
-    { required: true, message: t('auth.emailRequired'), type: 'error' },
-    { email: true, message: t('auth.emailInvalid'), type: 'error' }
-  ],
-  password: [
-    { required: true, message: t('auth.passwordRequired'), type: 'error' },
-    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
-    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
-    { pattern: /[a-zA-Z]/, message: t('auth.passwordMustContainLetter'), type: 'error' },
-    { pattern: /\d/, message: t('auth.passwordMustContainNumber'), type: 'error' }
-  ]
-}))
+const loginFormRules = computed(() => {
+  if (ldapEnabled.value) {
+    return {
+      email: [{ required: true, message: t('auth.accountRequired'), type: 'error', trigger: 'submit' }],
+      password: [{ required: true, message: t('auth.passwordRequired'), type: 'error', trigger: 'submit' }],
+    }
+  }
+  return {
+    email: [
+      { required: true, message: t('auth.emailRequired'), type: 'error' },
+      { email: true, message: t('auth.emailInvalid'), type: 'error' }
+    ],
+    password: [
+      { required: true, message: t('auth.passwordRequired'), type: 'error' },
+      { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
+      { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
+      { pattern: /[a-zA-Z]/, message: t('auth.passwordMustContainLetter'), type: 'error' },
+      { pattern: /\d/, message: t('auth.passwordMustContainNumber'), type: 'error' }
+    ]
+  }
+})
 
 // Register form validation rules
 const registerRules = computed(() => ({
@@ -622,11 +630,21 @@ const loadLDAPConfig = async () => {
   try {
     const response = await getLDAPConfig()
     ldapEnabled.value = !!response.success && !!response.enabled
+    ldapLocalLoginEnabled.value = response.local_login_enabled !== false
     ldapProviderName.value = response.provider_display_name || ''
   } catch {
     ldapEnabled.value = false
+    ldapLocalLoginEnabled.value = true
     ldapProviderName.value = ''
   }
+}
+
+const handleLoginSubmit = async () => {
+  if (ldapOnlyLogin.value) {
+    await handleLDAPLogin()
+    return
+  }
+  await handleLogin()
 }
 
 // loadAuthConfig fetches /auth/config and caches whether self-service
