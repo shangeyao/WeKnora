@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # ACR overseas build rules for docker compose --profile full.
 #
-# All images are defined as targets in docker/Dockerfile.
-#
-# Usage:
-#   ./scripts/acr_import_full_profile.sh          # print console checklist
-#   ./scripts/acr_import_full_profile.sh --list   # table only
+# ACR 个人版不支持 docker build --target，每个镜像需要单独 Dockerfile + 一条规则。
+# 查看完整填表说明：./scripts/acr_import_full_profile.sh
+# 查看规则表格：./scripts/acr_import_full_profile.sh --list
 
 set -euo pipefail
 
@@ -14,42 +12,41 @@ ACR_INSTANCE_ID="${ACR_INSTANCE_ID:-crpi-o8kn58wjl072akln}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-calb_ai}"
 ACR_REPO="${ACR_REPO:-weknora}"
 GITHUB_REPO="${GITHUB_REPO:-shangeyao/WeKnora}"
-GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 WEKNORA_VERSION="${WEKNORA_VERSION:-v0.6.3}"
-DOCKERFILE="docker/Dockerfile"
 
-# target|output_tag|notes
+# context_dir|dockerfile_name|image_tag|build_args|notes
+# 「构建上下文目录」= Dockerfile 所在目录（以仓库根为 /）
+# 源码镜像必须用 /（仓库根），否则 COPY go.mod / frontend/ 会失败
 RULES=(
-  "app|app-${WEKNORA_VERSION}|app from source"
-  "ui|ui-${WEKNORA_VERSION}|frontend multi-stage"
-  "docreader|docreader-${WEKNORA_VERSION}|from Docker Hub"
-  "sandbox|sandbox-${WEKNORA_VERSION}|from Docker Hub"
-  "mcp|mcp-${WEKNORA_VERSION}|mcp server"
-  "paradedb|paradedb-v0.22.2-pg17|postgres + langfuse-db-init"
-  "redis|redis-7.0-alpine|redis"
-  "busybox|busybox-1.36|searxng-init"
-  "searxng|searxng-latest|searxng"
-  "minio|minio-RELEASE.2025-09-07T16-13-09Z|minio + langfuse-minio"
-  "neo4j|neo4j-2025.10.1|neo4j"
-  "qdrant|qdrant-v1.16.2|qdrant"
-  "dex|dex-latest|dex OIDC"
-  "clickhouse|clickhouse-24.8|langfuse-clickhouse"
-  "langfuse|langfuse-3|langfuse-web"
-  "langfuse-worker|langfuse-worker-3|langfuse-worker"
+  "/|Dockerfile.app|app-${WEKNORA_VERSION}|SKIP_DUCKDB_EXTENSIONS=1|app from source"
+  "/|Dockerfile.ui|ui-${WEKNORA_VERSION}||frontend multi-stage"
+  "/|Dockerfile.mcp|mcp-${WEKNORA_VERSION}||mcp server"
+  "/docker/|Dockerfile.hub-docreader|docreader-${WEKNORA_VERSION}|WEKNORA_VERSION=${WEKNORA_VERSION}|from Docker Hub"
+  "/docker/|Dockerfile.hub-sandbox|sandbox-${WEKNORA_VERSION}|WEKNORA_VERSION=${WEKNORA_VERSION}|from Docker Hub"
+  "/docker/|Dockerfile.paradedb|paradedb-v0.22.2-pg17||postgres + langfuse-db-init"
+  "/docker/|Dockerfile.redis|redis-7.0-alpine||redis"
+  "/docker/|Dockerfile.busybox|busybox-1.36||searxng-init"
+  "/docker/|Dockerfile.searxng|searxng-latest||searxng"
+  "/docker/|Dockerfile.minio|minio-RELEASE.2025-09-07T16-13-09Z||minio + langfuse-minio"
+  "/docker/|Dockerfile.neo4j|neo4j-2025.10.1||neo4j"
+  "/docker/|Dockerfile.qdrant|qdrant-v1.16.2||qdrant"
+  "/docker/|Dockerfile.dex|dex-latest||dex OIDC"
+  "/docker/|Dockerfile.clickhouse|clickhouse-24.8||langfuse-clickhouse"
+  "/docker/|Dockerfile.langfuse|langfuse-3||langfuse-web"
+  "/docker/|Dockerfile.langfuse-worker|langfuse-worker-3||langfuse-worker"
 )
 
 list_rules() {
-  local entry target tag note
-  printf "%-4s %-20s %-38s %s\n" "#" "Target" "输出 Tag" "说明"
-  printf "%s\n" "----------------------------------------------------------------------------------------------------"
+  local entry ctx file tag args note
+  printf "%-4s %-12s %-28s %-38s %-28s %s\n" "#" "上下文目录" "Dockerfile文件名" "镜像版本(Tag)" "构建参数(可选)" "说明"
+  printf "%s\n" "------------------------------------------------------------------------------------------------------------------------------------------------------"
   local i=1
   for entry in "${RULES[@]}"; do
-    IFS='|' read -r target tag note <<<"$entry"
-    printf "%-4s %-20s %-38s %s\n" "$i" "$target" "$tag" "$note"
+    IFS='|' read -r ctx file tag args note <<<"$entry"
+    printf "%-4s %-12s %-28s %-38s %-28s %s\n" "$i" "$ctx" "$file" "$tag" "$args" "$note"
     i=$((i + 1))
   done
   echo
-  echo "Dockerfile: ${DOCKERFILE}"
   echo "实例: ${ACR_INSTANCE_ID}"
   echo "仓库: ${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPO}:<tag>"
   echo "共 ${#RULES[@]} 条构建规则"
@@ -57,40 +54,43 @@ list_rules() {
 
 print_guide() {
   cat <<EOF
-=== ACR 海外构建：full profile 全部镜像（${#RULES[@]} 条规则）===
+=== ACR 海外构建：full profile（${#RULES[@]} 条规则）===
 
-实例 ID: ${ACR_INSTANCE_ID}
-命名空间/仓库: ${ACR_NAMESPACE}/${ACR_REPO}
-代码源: GitHub ${GITHUB_REPO} Tag ${WEKNORA_VERSION}（或 Branch ${GITHUB_BRANCH}）
-Dockerfile: ${DOCKERFILE}
-WEKNORA_VERSION: ${WEKNORA_VERSION}
+代码源: GitHub ${GITHUB_REPO}
+类型 / Branch·Tag: 建议 Tag → ${WEKNORA_VERSION}（或 Branch → main）
+
+## 控制台每个字段怎么填
+
+| 字段 | 填法 |
+|------|------|
+| 类型 | Tag（推荐）或 Branch |
+| Branch/Tag | ${WEKNORA_VERSION} 或 main |
+| 构建上下文目录 | 见下表「上下文目录」列（不是随意选的 docker build context） |
+| Dockerfile文件名 | 见下表「Dockerfile文件名」列 |
+| 镜像版本 | 见下表「镜像版本」列（不要填 latest，除非就是该组件） |
+| 构建参数 | 见下表「构建参数」列（有则填，无则留空） |
+
+重要：
+  1. 「构建上下文目录」在 ACR 里表示 **Dockerfile 文件所在目录**（相对仓库根）。
+     例：文件在 /docker/Dockerfile.redis → 填 /docker/
+     例：文件在 /Dockerfile.app → 填 /
+  2. app / ui / mcp 必须填上下文 /（仓库根），否则 COPY 找不到 cmd/、frontend/。
+  3. ACR 个人版 **不支持 --target**，不能用一个多 stage Dockerfile 出 16 个镜像。
+  4. 每条规则 = 一个 Dockerfile = 一个镜像 Tag。
 
 前置（只做一次）：
-  1. ACR 控制台 → ${ACR_NAMESPACE}/${ACR_REPO} → 构建 → 绑定 GitHub ${GITHUB_REPO}
+  1. 绑定 GitHub ${GITHUB_REPO}
   2. 开启「海外机器构建」
-  3. 开启「代码变更时自动构建镜像」（可选，否则手动点立即构建）
-
-每条规则（共 ${#RULES[@]} 条）：
-  1. 构建 → 添加规则
-  2. 类型 Tag ${WEKNORA_VERSION} 或 Branch ${GITHUB_BRANCH}
-  3. Dockerfile 路径 = ${DOCKERFILE}
-     - 目录 docker/  文件名 Dockerfile
-  4. 构建阶段 (target) = 下表「Target」列
-     - 若控制台无 target 字段，在构建参数中添加：target=<Target>
-  5. 构建参数（源码镜像建议）：WEKNORA_VERSION=${WEKNORA_VERSION}
-  6. 镜像 Tag = 下表「输出 Tag」列
-  7. 保存
-
-全部规则添加后：
-  - 首次：每条点「立即构建」
-  - 之后：git push ${GITHUB_BRANCH} 可自动触发（需开启自动构建）
-
-部署（服务器 amd64）：
-  docker login ${ACR_REGISTRY}
-  docker compose -f docker-compose.calb-ai.yml up -d
+  3. （可选）开启「代码变更时自动构建镜像」
 
 EOF
   list_rules
+  cat <<EOF
+
+部署：
+  docker login ${ACR_REGISTRY}
+  docker compose -f docker-compose.calb-ai.yml up -d
+EOF
 }
 
 case "${1:-}" in

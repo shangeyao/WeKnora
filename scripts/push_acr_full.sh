@@ -97,15 +97,13 @@ build_local_images() {
     return
   fi
 
-  echo "[acr] building app for ${DOCKER_PLATFORM} (docker/Dockerfile --target app) ..."
-  docker build --platform "${DOCKER_PLATFORM}" -f docker/Dockerfile --target app \
+  echo "[acr] building app for ${DOCKER_PLATFORM} ..."
+  docker build --platform "${DOCKER_PLATFORM}" -f docker/Dockerfile.app \
     --build-arg SKIP_DUCKDB_EXTENSIONS=1 \
-    --build-arg "WEKNORA_VERSION=${WEKNORA_VERSION}" \
     -t weknora-app:local .
 
-  echo "[acr] building ui for ${DOCKER_PLATFORM} (docker/Dockerfile --target ui) ..."
-  docker build --platform "${DOCKER_PLATFORM}" -f docker/Dockerfile --target ui \
-    --build-arg "WEKNORA_VERSION=${WEKNORA_VERSION}" \
+  echo "[acr] building ui for ${DOCKER_PLATFORM} ..."
+  docker build --platform "${DOCKER_PLATFORM}" -f docker/Dockerfile.ui \
     -t "wechatopenai/weknora-ui:${WEKNORA_VERSION}" .
 }
 

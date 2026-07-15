@@ -8,67 +8,44 @@ ACR_REGISTRY="${ACR_REGISTRY:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliy
 ACR_NAMESPACE="${ACR_NAMESPACE:-calb_ai}"
 ACR_REPO="${ACR_REPO:-weknora}"
 GITHUB_REPO="${GITHUB_REPO:-shangeyao/WeKnora}"
-GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
-DOCKERFILE="docker/Dockerfile"
+WEKNORA_VERSION="${WEKNORA_VERSION:-v0.6.3}"
 
+# context_dir|dockerfile_name|image_tag|notes
 RULES=(
-  "langfuse|langfuse-3|langfuse-web"
-  "langfuse-worker|langfuse-worker-3|langfuse-worker"
-  "clickhouse|clickhouse-24.8|langfuse-clickhouse"
-  "minio|minio-RELEASE.2025-09-07T16-13-09Z|langfuse-minio"
+  "/docker/|Dockerfile.langfuse|langfuse-3|langfuse-web"
+  "/docker/|Dockerfile.langfuse-worker|langfuse-worker-3|langfuse-worker"
+  "/docker/|Dockerfile.clickhouse|clickhouse-24.8|langfuse-clickhouse"
+  "/docker/|Dockerfile.minio|minio-RELEASE.2025-09-07T16-13-09Z|langfuse-minio"
 )
 
 list_rules() {
-  local entry target tag note
-  printf "%-4s %-20s %-35s %s\n" "#" "Target" "输出 Tag" "Compose 服务"
-  printf "%s\n" "---------------------------------------------------------------------------------------------"
+  local entry ctx file tag note
+  printf "%-4s %-12s %-28s %-35s %s\n" "#" "上下文目录" "Dockerfile文件名" "镜像版本" "Compose 服务"
+  printf "%s\n" "---------------------------------------------------------------------------------------------------"
   local i=1
   for entry in "${RULES[@]}"; do
-    IFS='|' read -r target tag note <<<"$entry"
-    printf "%-4s %-20s %-35s %s\n" "$i" "$target" "$tag" "$note"
+    IFS='|' read -r ctx file tag note <<<"$entry"
+    printf "%-4s %-12s %-28s %-35s %s\n" "$i" "$ctx" "$file" "$tag" "$note"
     i=$((i + 1))
   done
   echo
-  echo "Dockerfile: ${DOCKERFILE}"
   echo "目标仓库: ${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPO}:<tag>"
 }
 
 print_guide() {
   cat <<EOF
-=== 用 ACR 海外构建导入 Langfuse（amd64）===
+=== Langfuse 镜像 ACR 海外构建（4 条规则）===
 
-本地 Mac 无需 docker pull。在 ACR 控制台用海外机器拉取 Docker Hub 并推送到你的仓库。
+类型: Tag ${WEKNORA_VERSION}（或 Branch main）
 
-前置：GitHub 仓库 ${GITHUB_REPO} 已绑定到 ACR 个人版实例（仓库管理 → 代码源）。
-
-步骤（每个镜像重复一次，共 4 条构建规则）：
-
-1. 打开 ACR 控制台 → 个人版实例 → 仓库管理 → 镜像仓库 → ${ACR_NAMESPACE}/${ACR_REPO}
-2. 左侧「构建」→「添加规则」
-3. 配置：
-   - 代码源分支：${GITHUB_BRANCH}
-   - Dockerfile：${DOCKERFILE}（目录 docker/ 文件 Dockerfile）
-   - 构建阶段 (target)：见下方表格
-   - 镜像版本（Tag）：见下方表格
-   - 开启「海外机器构建」/「海外加速」（必须）
-4. 保存后点击「立即构建」，等待成功（通常几分钟）
+每条规则：
+  构建上下文目录 = 下表「上下文目录」
+  Dockerfile文件名 = 下表「Dockerfile文件名」
+  镜像版本 = 下表「镜像版本」
+  开启「海外机器构建」
 
 EOF
   list_rules
-  cat <<EOF
-
-构建完成后，在 amd64 服务器上：
-
-  docker login ${ACR_REGISTRY}
-  docker compose -f docker-compose.calb-ai.yml pull langfuse-web langfuse-worker langfuse-clickhouse langfuse-minio
-  docker compose -f docker-compose.calb-ai.yml up -d langfuse-web langfuse-worker langfuse-clickhouse langfuse-minio
-
-验证镜像架构（应为 amd64）：
-
-  docker manifest inspect ${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPO}:langfuse-3 | grep architecture
-
-若尚未绑定 GitHub：先在 ACR 控制台绑定代码源，再 git push 本仓库到 ${GITHUB_BRANCH}。
-EOF
 }
 
 case "${1:-}" in
