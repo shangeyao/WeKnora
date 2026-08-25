@@ -33,8 +33,20 @@ export MAX_SKILL_BUNDLE_SIZE=${SKILL_MB}M
 export APP_HOST=${APP_HOST:-app}
 export APP_PORT=${APP_PORT:-8080}
 export APP_SCHEME=${APP_SCHEME:-http}
-envsubst '${MAX_FILE_SIZE} ${MAX_SKILL_BUNDLE_SIZE} ${APP_HOST} ${APP_PORT} ${APP_SCHEME}' \
+# e.g. /weknora — no trailing slash; empty means serve at /
+FRONTEND_BASE_PATH="${FRONTEND_BASE_PATH:-}"
+if [ -z "$FRONTEND_BASE_PATH" ] && [ -f /usr/share/nginx/html/.frontend-base-path ]; then
+  FRONTEND_BASE_PATH="$(tr -d '\n\r' < /usr/share/nginx/html/.frontend-base-path)"
+fi
+FRONTEND_BASE_PATH="${FRONTEND_BASE_PATH%/}"
+export FRONTEND_BASE_PATH
+envsubst '${MAX_FILE_SIZE} ${MAX_SKILL_BUNDLE_SIZE} ${APP_HOST} ${APP_PORT} ${APP_SCHEME} ${FRONTEND_BASE_PATH}' \
   < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
+if [ -n "$FRONTEND_BASE_PATH" ]; then
+  sed -i "s|# __FRONTEND_REDIRECT__|location = ${FRONTEND_BASE_PATH} { return 301 ${FRONTEND_BASE_PATH}/; }|" /etc/nginx/conf.d/default.conf
+else
+  sed -i '/# __FRONTEND_REDIRECT__/d' /etc/nginx/conf.d/default.conf
+fi
 
 # 启动 nginx
 exec nginx -g 'daemon off;'

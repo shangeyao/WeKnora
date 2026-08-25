@@ -4537,6 +4537,13 @@ export default {
   auth: {
     login: 'Вход',
     logout: 'Выход',
+    account: 'Учётная запись',
+    accountPlaceholder: 'Введите email или LDAP-аккаунт',
+    accountRequired: 'Введите учётную запись',
+    ldapLogin: 'Войти через LDAP',
+    ldapLoginWithProvider: 'Войти через {provider}',
+    loggingInWithLDAP: 'Вход через LDAP...',
+    ldapLoginFailed: 'Ошибка входа через LDAP',
     oidcLogin: 'Войти через OIDC',
     oidcLoginWithProvider: 'Войти через {provider}',
     redirectingToOIDC: 'Перенаправление к поставщику удостоверений...',

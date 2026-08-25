@@ -40,9 +40,18 @@ services:
   searxng-init:
     image: busybox:1.36
     container_name: WeKnora-searxng-init-dev
-    command: ["sh", "-c", "cp /template/settings.yml /etc/searxng/settings.yml && chmod 0644 /etc/searxng/settings.yml"]
+    command:
+      - sh
+      - -c
+      - |
+        if [ ! -f /template/settings.yml ]; then
+          echo "missing /template/settings.yml — on the host ensure docker/searxng/settings.yml is a regular file (not a directory created by Docker when the path was absent)" >&2
+          exit 1
+        fi
+        cp /template/settings.yml /etc/searxng/settings.yml
+        chmod 0644 /etc/searxng/settings.yml
     volumes:
-      - ./docker/searxng/settings.yml:/template/settings.yml:ro
+      - ./docker/searxng:/template:ro
       - searxng_config_dev:/etc/searxng
     restart: "no"
     networks:

@@ -17,6 +17,8 @@ services:
       # For remote deployment, set this to the remote App's service port.
       - APP_PORT=${APP_BACKEND_PORT:-8080}
       - APP_SCHEME=${APP_SCHEME:-http}
+      # Optional subpath prefix without trailing slash, e.g. /weknora
+      - FRONTEND_BASE_PATH=${FRONTEND_BASE_PATH:-}
     # NOTE: If using a remote App backend, comment out or remove the depends_on
     # block below and set APP_HOST/APP_BACKEND_PORT/APP_SCHEME in your .env file.
     depends_on:
@@ -111,6 +113,9 @@ services:
       - COS_PATH_PREFIX=${COS_PATH_PREFIX:-}
       - COS_TEMP_BUCKET_NAME=${COS_TEMP_BUCKET_NAME:-}
       - COS_TEMP_REGION=${COS_TEMP_REGION:-}
+      - COS_ENABLE_OLD_DOMAIN=${COS_ENABLE_OLD_DOMAIN:-}
+      - FRONTEND_BASE_PATH=${FRONTEND_BASE_PATH:-}
+      - JIEBA_DICT_DIR=${JIEBA_DICT_DIR:-/go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.7/deps/cppjieba/dict}
 
       # 认证 / 空间 / RBAC / 审计
       # 禁止新用户注册（生产建议 true）
@@ -524,6 +529,10 @@ services:
       - POSTGRES_DB=${DB_NAME}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    # 宿主机访问 PG（仅新增端口映射，postgres-data 卷不变，数据不受影响）。
+    # 默认只监听 127.0.0.1；需局域网/外网访问时在 .env 设 POSTGRES_HOST_BIND=0.0.0.0
+    ports:
+      - ${POSTGRES_HOST_BIND:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432
     networks:
       - WeKnora-network
     healthcheck:
@@ -552,9 +561,18 @@ services:
   searxng-init:
     image: busybox:1.36
     container_name: WeKnora-searxng-init
-    command: ["sh", "-c", "cp /template/settings.yml /etc/searxng/settings.yml && chmod 0644 /etc/searxng/settings.yml"]
+    command:
+      - sh
+      - -c
+      - |
+        if [ ! -f /template/settings.yml ]; then
+          echo "missing /template/settings.yml — on the host ensure docker/searxng/settings.yml is a regular file (not a directory created by Docker when the path was absent)" >&2
+          exit 1
+        fi
+        cp /template/settings.yml /etc/searxng/settings.yml
+        chmod 0644 /etc/searxng/settings.yml
     volumes:
-      - ./docker/searxng/settings.yml:/template/settings.yml:ro
+      - ./docker/searxng:/template:ro
       - searxng_config:/etc/searxng
     restart: "no"
     networks:

@@ -143,6 +143,18 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 }
 
+type LDAPLoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required,min=1"`
+}
+
+type LDAPConfigResponse struct {
+	Success             bool   `json:"success"`
+	Enabled             bool   `json:"enabled"`
+	LocalLoginEnabled   bool   `json:"local_login_enabled"`
+	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+}
+
 type OIDCAuthURLResponse struct {
 	Success             bool   `json:"success"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
@@ -157,6 +169,19 @@ type OIDCConfigResponse struct {
 	Success             bool   `json:"success"`
 	Enabled             bool   `json:"enabled"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
+}
+
+type PortalSSOConfigResponse struct {
+	Success       bool   `json:"success"`
+	Enabled       bool   `json:"enabled"`
+	TokenParam    string `json:"token_param,omitempty"`
+	HideLoginForm bool   `json:"hide_login_form,omitempty"`
+}
+
+// PortalSSOUserInfo carries identity fields extracted from a portal token.
+type PortalSSOUserInfo struct {
+	Email string
+	Name  string
 }
 
 type OIDCCallbackResponse struct {

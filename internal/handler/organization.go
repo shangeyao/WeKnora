@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -564,12 +566,16 @@ func (h *OrganizationHandler) GenerateInviteCode(c *gin.Context) {
 func (h *OrganizationHandler) PreviewByInviteCode(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	inviteCode := c.Param("code")
+	inviteCode := normalizeInviteCodeParam(c.Param("code"))
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
 
 	// Get organization by invite code
 	org, err := h.orgService.GetOrganizationByInviteCode(ctx, inviteCode)
 	if err != nil {
+		if errors.Is(err, service.ErrInviteCodeExpired) {
+			c.Error(apperrors.NewValidationError("Invite code has expired"))
+			return
+		}
 		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
 		return
 	}
@@ -628,12 +634,17 @@ func (h *OrganizationHandler) JoinByInviteCode(c *gin.Context) {
 		c.Error(apperrors.NewValidationError("Invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	req.InviteCode = normalizeInviteCodeParam(req.InviteCode)
 
 	org, err := h.orgService.JoinByInviteCode(ctx, req.InviteCode, userID, tenantID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to join organization: %v", err)
 		if errors.Is(err, service.ErrOrgMemberLimitReached) {
 			c.Error(apperrors.NewValidationError("该空间成员已满，无法加入"))
+			return
+		}
+		if errors.Is(err, service.ErrInviteCodeExpired) {
+			c.Error(apperrors.NewValidationError("Invite code has expired"))
 			return
 		}
 		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
@@ -669,10 +680,15 @@ func (h *OrganizationHandler) SubmitJoinRequest(c *gin.Context) {
 		c.Error(apperrors.NewValidationError("Invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	req.InviteCode = normalizeInviteCodeParam(req.InviteCode)
 
 	// Get organization by invite code
 	org, err := h.orgService.GetOrganizationByInviteCode(ctx, req.InviteCode)
 	if err != nil {
+		if errors.Is(err, service.ErrInviteCodeExpired) {
+			c.Error(apperrors.NewValidationError("Invite code has expired"))
+			return
+		}
 		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
 		return
 	}
@@ -2094,4 +2110,23 @@ func (h *OrganizationHandler) InviteMember(c *gin.Context) {
 		"success": true,
 		"message": "Member added successfully",
 	})
+}
+
+// normalizeInviteCodeParam accepts a bare hex code or a pasted invite link.
+func normalizeInviteCodeParam(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "://") || strings.Contains(raw, "code=") {
+		if u, err := url.Parse(raw); err == nil {
+			if code := strings.TrimSpace(u.Query().Get("code")); code != "" {
+				return strings.ToLower(code)
+			}
+			if code := strings.TrimSpace(u.Query().Get("invite_code")); code != "" {
+				return strings.ToLower(code)
+			}
+		}
+	}
+	return strings.ToLower(raw)
 }

@@ -3261,6 +3261,9 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		s.repo.UpdateKnowledge(ctx, knowledge)
 		return nil
 	}
+	// Resolve storage against KB owner (shared-space editor uploads must read back
+	// from the same backend where SaveFile stored the object).
+	ctx = s.ctxWithOwnerTenantForKB(ctx, kb.TenantID)
 
 	processOverrides, _ := knowledge.ProcessOverrides()
 	eff := ResolveProcessConfig(kb, processOverrides)

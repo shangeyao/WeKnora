@@ -538,6 +538,7 @@ import {
   type AuditAction,
   type AuditOutcome,
 } from '@/api/tenant/audit-log'
+import { absoluteAppURL } from '@/utils/app-path'
 
 const { t, tm, locale } = useI18n()
 const authStore = useAuthStore()
@@ -1257,12 +1258,9 @@ watch(shareLinkPopupVisible, (open) => {
 // absoluteInviteURL turns the backend's potentially-host-relative
 // invite_url into a copy-friendly absolute URL. The backend returns
 // "/register?token=…" when FRONTEND_BASE_URL is unset (the typical
-// case); the SPA is best-positioned to know its own origin.
+// case); the SPA resolves it with the configured subpath prefix.
 function absoluteInviteURL(raw: string): string {
-  if (!raw) return ''
-  if (/^https?:\/\//i.test(raw)) return raw
-  const origin = (typeof window !== 'undefined' && window.location && window.location.origin) || ''
-  return raw.startsWith('/') ? origin + raw : origin + '/' + raw
+  return absoluteAppURL(raw)
 }
 
 async function copyText(text: string) {

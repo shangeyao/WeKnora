@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -24,6 +25,9 @@ type Config struct {
 	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
 	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
 	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	LDAPAuth        *LDAPAuthConfig        `yaml:"ldap_auth"        json:"ldap_auth"`
+	PortalSSOAuth   *PortalSSOAuthConfig   `yaml:"portal_sso_auth"  json:"portal_sso_auth"`
+	DongjianSSOAuth *DongjianSSOAuthConfig `yaml:"dongjian_sso_auth" json:"dongjian_sso_auth"`
 	Models          []ModelConfig          `yaml:"models"           json:"models"`
 	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
 	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
@@ -39,6 +43,9 @@ type Config struct {
 	// against window.location.origin — fine for typical single-origin
 	// deployments. Sourced from FRONTEND_BASE_URL env at startup.
 	FrontendBaseURL string `yaml:"frontend_base_url" json:"frontend_base_url"`
+	// FrontendBasePath is the SPA URL prefix when not served from root
+	// (e.g. "/weknora"). Sourced from FRONTEND_BASE_PATH env at startup.
+	FrontendBasePath string `yaml:"frontend_base_path" json:"frontend_base_path"`
 }
 
 // AgentConfig represents the global agent settings.
@@ -322,6 +329,67 @@ type OIDCAuthConfig struct {
 	UserInfoMapping       *OIDCUserInfoMapping `yaml:"user_info_mapping"      json:"user_info_mapping"`
 }
 
+type LDAPUserInfoMapping struct {
+	Username string `yaml:"username" json:"username"`
+	Email    string `yaml:"email"    json:"email"`
+}
+
+type LDAPAuthConfig struct {
+	Enable            bool `yaml:"enable" json:"enable"`
+	// DisableLocalLogin blocks POST /auth/login when LDAP is the sole
+	// identity source. Nil/absent defaults to true whenever enable is true.
+	DisableLocalLogin *bool                `yaml:"disable_local_login" json:"disable_local_login"`
+	Host              string               `yaml:"host"                  json:"host"`
+	Port                int                  `yaml:"port"                  json:"port"`
+	UseSSL              bool                 `yaml:"use_ssl"               json:"use_ssl"`
+	StartTLS            bool                 `yaml:"start_tls"             json:"start_tls"`
+	SkipVerify          bool                 `yaml:"skip_verify"           json:"-"`
+	BindDN              string               `yaml:"bind_dn"               json:"bind_dn"`
+	BindPassword        string               `yaml:"bind_password"         json:"-"`
+	BaseDN              string               `yaml:"base_dn"               json:"base_dn"`
+	UserFilter          string               `yaml:"user_filter"           json:"user_filter"`
+	UserIDAttribute     string               `yaml:"user_id_attribute"     json:"user_id_attribute"`
+	ProviderDisplayName string               `yaml:"provider_display_name" json:"provider_display_name"`
+	UserInfoMapping     *LDAPUserInfoMapping `yaml:"user_info_mapping"     json:"user_info_mapping"`
+}
+
+// PortalSSOAuthConfig enables trust-based login from an enterprise portal
+// that passes an AES-256-GCM encrypted JSON payload on the login URL.
+type PortalSSOAuthConfig struct {
+	Enable        bool   `yaml:"enable"          json:"enable"`
+	AESKey        string `yaml:"aes_key"         json:"-"`
+	TokenParam    string `yaml:"token_param"     json:"token_param"`
+	MaxAgeSeconds int    `yaml:"max_age_seconds" json:"max_age_seconds"`
+	HideLoginForm bool   `yaml:"hide_login_form" json:"hide_login_form"`
+}
+
+// DongjianSSOAuthConfig integrates RSA-encrypted ssoToken from 洞鉴 (Dongjian) enterprise portal.
+type DongjianSSOAuthConfig struct {
+	Enable         bool   `yaml:"enable"           json:"enable"`
+	ClientID       string `yaml:"client_id"        json:"client_id"`
+	RSAPrivateKey  string `yaml:"rsa_private_key"  json:"-"`
+	HideLoginForm  bool   `yaml:"hide_login_form"  json:"hide_login_form"`
+}
+
+// LocalLoginDisabled reports whether password login must be rejected because
+// LDAP is the configured identity source. When LDAP is off, local login stays
+// available. When LDAP is on and disable_local_login is unset, local login is
+// disabled by default.
+func (c *LDAPAuthConfig) LocalLoginDisabled() bool {
+	if c == nil || !c.Enable {
+		return false
+	}
+	if c.DisableLocalLogin == nil {
+		return true
+	}
+	return *c.DisableLocalLogin
+}
+
+// LocalLoginEnabled is the inverse of LocalLoginDisabled for public config APIs.
+func (c *LDAPAuthConfig) LocalLoginEnabled() bool {
+	return !c.LocalLoginDisabled()
+}
+
 // PromptTemplateI18n holds localized name and description for a prompt template.
 type PromptTemplateI18n struct {
 	Name        string `yaml:"name"        json:"name"`
@@ -580,6 +648,9 @@ func LoadConfig() (*Config, error) {
 
 	// Validate configuration values
 	applyOIDCEnvOverrides(&cfg)
+	applyLDAPEnvOverrides(&cfg)
+	applyPortalSSOEnvOverrides(&cfg)
+	applyDongjianSSOEnvOverrides(&cfg)
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
 	applyAuthAndTenantDefaults(&cfg)
@@ -625,6 +696,43 @@ func ValidateConfig(cfg *Config) error {
 		if strings.TrimSpace(cfg.OIDCAuth.DiscoveryURL) == "" &&
 			(strings.TrimSpace(cfg.OIDCAuth.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.OIDCAuth.TokenEndpoint) == "") {
 			errs = append(errs, "oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled")
+		}
+	}
+
+	if cfg.LDAPAuth != nil && cfg.LDAPAuth.Enable {
+		if strings.TrimSpace(cfg.LDAPAuth.Host) == "" {
+			errs = append(errs, "ldap_auth.host is required when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.Port <= 0 {
+			errs = append(errs, "ldap_auth.port must be greater than 0 when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.UseSSL && cfg.LDAPAuth.StartTLS {
+			errs = append(errs, "ldap_auth.use_ssl and ldap_auth.start_tls cannot both be true")
+		}
+		if strings.TrimSpace(cfg.LDAPAuth.BaseDN) == "" {
+			errs = append(errs, "ldap_auth.base_dn is required when LDAP is enabled")
+		}
+		if strings.TrimSpace(cfg.LDAPAuth.UserFilter) == "" {
+			errs = append(errs, "ldap_auth.user_filter is required when LDAP is enabled")
+		}
+		if cfg.LDAPAuth.UserInfoMapping == nil || strings.TrimSpace(cfg.LDAPAuth.UserInfoMapping.Email) == "" {
+			errs = append(errs, "ldap_auth.user_info_mapping.email is required when LDAP is enabled")
+		}
+	}
+
+	if cfg.PortalSSOAuth != nil && cfg.PortalSSOAuth.Enable {
+		if strings.TrimSpace(cfg.PortalSSOAuth.AESKey) == "" {
+			errs = append(errs, "portal_sso_auth.aes_key (PORTAL_SSO_AES_KEY) is required when portal SSO is enabled")
+		} else if _, err := utils.ParsePortalSSOKey(cfg.PortalSSOAuth.AESKey); err != nil {
+			errs = append(errs, "portal_sso_auth.aes_key: "+err.Error())
+		}
+	}
+
+	if cfg.DongjianSSOAuth != nil && cfg.DongjianSSOAuth.Enable {
+		if strings.TrimSpace(cfg.DongjianSSOAuth.RSAPrivateKey) == "" {
+			errs = append(errs, "dongjian_sso_auth.rsa_private_key (DONGJIAN_SSO_RSA_PRIVATE_KEY) is required when dongjian SSO is enabled")
+		} else if _, err := utils.ParseRSAPrivateKeyPEM(cfg.DongjianSSOAuth.RSAPrivateKey); err != nil {
+			errs = append(errs, "dongjian_sso_auth.rsa_private_key: "+err.Error())
 		}
 	}
 
@@ -748,6 +856,147 @@ func applyOIDCEnvOverrides(cfg *Config) {
 	}
 	if cfg.OIDCAuth.DiscoveryURL == "" && cfg.OIDCAuth.IssuerURL != "" {
 		cfg.OIDCAuth.DiscoveryURL = strings.TrimRight(cfg.OIDCAuth.IssuerURL, "/") + "/.well-known/openid-configuration"
+	}
+}
+
+func applyLDAPEnvOverrides(cfg *Config) {
+	if cfg.LDAPAuth == nil {
+		cfg.LDAPAuth = &LDAPAuthConfig{}
+	}
+	if cfg.LDAPAuth.UserInfoMapping == nil {
+		cfg.LDAPAuth.UserInfoMapping = &LDAPUserInfoMapping{}
+	}
+
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_ENABLE")); value != "" {
+		cfg.LDAPAuth.Enable = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_HOST")); value != "" {
+		cfg.LDAPAuth.Host = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_PORT")); value != "" {
+		if port, err := strconv.Atoi(value); err == nil {
+			cfg.LDAPAuth.Port = port
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USE_SSL")); value != "" {
+		cfg.LDAPAuth.UseSSL = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_START_TLS")); value != "" {
+		cfg.LDAPAuth.StartTLS = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_SKIP_VERIFY")); value != "" {
+		cfg.LDAPAuth.SkipVerify = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BIND_DN")); value != "" {
+		cfg.LDAPAuth.BindDN = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BIND_PASSWORD")); value != "" {
+		cfg.LDAPAuth.BindPassword = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_BASE_DN")); value != "" {
+		cfg.LDAPAuth.BaseDN = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USER_FILTER")); value != "" {
+		cfg.LDAPAuth.UserFilter = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_USER_ID_ATTRIBUTE")); value != "" {
+		cfg.LDAPAuth.UserIDAttribute = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_PROVIDER_DISPLAY_NAME")); value != "" {
+		cfg.LDAPAuth.ProviderDisplayName = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_USER_INFO_MAPPING_USER_NAME")); value != "" {
+		cfg.LDAPAuth.UserInfoMapping.Username = value
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_USER_INFO_MAPPING_EMAIL")); value != "" {
+		cfg.LDAPAuth.UserInfoMapping.Email = value
+	}
+
+	if cfg.LDAPAuth.Port == 0 {
+		if cfg.LDAPAuth.UseSSL {
+			cfg.LDAPAuth.Port = 636
+		} else {
+			cfg.LDAPAuth.Port = 389
+		}
+	}
+	if cfg.LDAPAuth.ProviderDisplayName == "" {
+		cfg.LDAPAuth.ProviderDisplayName = "LDAP"
+	}
+	if cfg.LDAPAuth.UserIDAttribute == "" {
+		cfg.LDAPAuth.UserIDAttribute = "uid"
+	}
+	if value := strings.TrimSpace(os.Getenv("LDAP_AUTH_DISABLE_LOCAL_LOGIN")); value != "" {
+		v := strings.EqualFold(value, "true")
+		cfg.LDAPAuth.DisableLocalLogin = &v
+	}
+	if cfg.LDAPAuth.UserInfoMapping.Username == "" {
+		cfg.LDAPAuth.UserInfoMapping.Username = "cn"
+	}
+	if cfg.LDAPAuth.UserInfoMapping.Email == "" {
+		cfg.LDAPAuth.UserInfoMapping.Email = "mail"
+	}
+}
+
+func applyPortalSSOEnvOverrides(cfg *Config) {
+	if cfg.PortalSSOAuth == nil {
+		cfg.PortalSSOAuth = &PortalSSOAuthConfig{}
+	}
+	if value := strings.TrimSpace(os.Getenv("PORTAL_SSO_ENABLE")); value != "" {
+		cfg.PortalSSOAuth.Enable = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("PORTAL_SSO_AES_KEY")); value != "" {
+		cfg.PortalSSOAuth.AESKey = value
+	}
+	if value := strings.TrimSpace(os.Getenv("PORTAL_SSO_TOKEN_PARAM")); value != "" {
+		cfg.PortalSSOAuth.TokenParam = value
+	}
+	if value := strings.TrimSpace(os.Getenv("PORTAL_SSO_MAX_AGE")); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+			cfg.PortalSSOAuth.MaxAgeSeconds = seconds
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("PORTAL_SSO_HIDE_LOGIN_FORM")); value != "" {
+		cfg.PortalSSOAuth.HideLoginForm = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("FRONTEND_BASE_PATH")); value != "" {
+		cfg.FrontendBasePath = strings.Trim(value, "/")
+		if cfg.FrontendBasePath != "" {
+			cfg.FrontendBasePath = "/" + strings.Trim(cfg.FrontendBasePath, "/")
+		}
+	}
+	if cfg.PortalSSOAuth.TokenParam == "" {
+		cfg.PortalSSOAuth.TokenParam = "token"
+	}
+	if cfg.PortalSSOAuth.MaxAgeSeconds <= 0 {
+		cfg.PortalSSOAuth.MaxAgeSeconds = 300
+	}
+}
+
+func applyDongjianSSOEnvOverrides(cfg *Config) {
+	if cfg.DongjianSSOAuth == nil {
+		cfg.DongjianSSOAuth = &DongjianSSOAuthConfig{}
+	}
+	if value := strings.TrimSpace(os.Getenv("DONGJIAN_SSO_ENABLE")); value != "" {
+		cfg.DongjianSSOAuth.Enable = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("DONGJIAN_SSO_CLIENT_ID")); value != "" {
+		cfg.DongjianSSOAuth.ClientID = value
+	}
+	if value := strings.TrimSpace(os.Getenv("DONGJIAN_SSO_RSA_PRIVATE_KEY")); value != "" {
+		cfg.DongjianSSOAuth.RSAPrivateKey = value
+	}
+	if cfg.DongjianSSOAuth.RSAPrivateKey == "" {
+		if path := strings.TrimSpace(os.Getenv("DONGJIAN_SSO_RSA_PRIVATE_KEY_FILE")); path != "" {
+			if b, err := os.ReadFile(path); err == nil {
+				cfg.DongjianSSOAuth.RSAPrivateKey = string(b)
+			}
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("DONGJIAN_SSO_HIDE_LOGIN_FORM")); value != "" {
+		cfg.DongjianSSOAuth.HideLoginForm = strings.EqualFold(value, "true")
+	}
+	if cfg.DongjianSSOAuth.ClientID == "" {
+		cfg.DongjianSSOAuth.ClientID = "dongjian"
 	}
 }
 

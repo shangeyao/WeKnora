@@ -840,6 +840,7 @@ import { useAuthStore } from '@/stores/auth'
 import SpaceAvatar from '@/components/SpaceAvatar.vue'
 import agentIconSrc from '@/assets/img/agent.svg'
 import agentIconActiveSrc from '@/assets/img/agent-green.svg'
+import { absoluteAppURL } from '@/utils/app-path'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -1273,7 +1274,7 @@ const isOwnerMember = (member: OrganizationMember): boolean => {
 
 const inviteLink = computed(() => {
   if (!inviteCode.value) return ''
-  return `${window.location.origin}/join?code=${inviteCode.value}`
+  return absoluteAppURL(`/join?code=${inviteCode.value}`)
 })
 
 const inviteValidityOptions = computed(() => [

@@ -678,9 +678,12 @@ func (s *knowledgeService) GetKnowledgeFile(ctx context.Context, id string) (io.
 		return io.NopCloser(strings.NewReader(content)), filename, nil
 	}
 
-	// Resolve KB-level file service with FilePath fallback protection
-	kb, _ := s.kbService.GetKnowledgeBaseByID(ctx, knowledge.KnowledgeBaseID)
-	file, err := s.resolveFileServiceForPath(ctx, kb, knowledge.FilePath).GetFile(ctx, knowledge.FilePath)
+	// Resolve KB-level file service with FilePath fallback protection.
+	// Shared-space access must use the source tenant's storage config (preview for
+	// viewer, download for editor); caller TenantInfo alone is not enough.
+	fileCtx := s.ctxWithOwnerTenantForKB(ctx, knowledge.TenantID)
+	kb, _ := s.kbService.GetKnowledgeBaseByID(fileCtx, knowledge.KnowledgeBaseID)
+	file, err := s.resolveFileServiceForPath(fileCtx, kb, knowledge.FilePath).GetFile(fileCtx, knowledge.FilePath)
 	if err != nil {
 		return nil, "", err
 	}

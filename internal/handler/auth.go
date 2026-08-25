@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -257,6 +258,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	logger.Info(ctx, "Start user login")
 
+	if h.configInfo != nil && h.configInfo.LDAPAuth != nil && h.configInfo.LDAPAuth.LocalLoginDisabled() {
+		logger.Warn(ctx, "Local password login rejected: LDAP is the configured identity source")
+		appErr := errors.NewForbiddenError("Local password login is disabled; use LDAP")
+		c.Error(appErr)
+		return
+	}
+
 	var req types.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to parse login request parameters", err)
@@ -294,6 +302,71 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	logger.Infof(ctx, "User logged in successfully, email: %s", email)
 	c.JSON(http.StatusOK, dto.NewAuthLoginResponse(response))
+}
+
+// GetLDAPConfig godoc
+// @Summary      获取LDAP登录配置
+// @Description  返回LDAP是否启用以及provider展示名称，供前端决定是否展示LDAP登录入口
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  types.LDAPConfigResponse
+// @Router       /auth/ldap/config [get]
+func (h *AuthHandler) GetLDAPConfig(c *gin.Context) {
+	providerDisplayName := ""
+	enabled := false
+	localLoginEnabled := true
+
+	if h.configInfo != nil && h.configInfo.LDAPAuth != nil {
+		enabled = h.configInfo.LDAPAuth.Enable
+		providerDisplayName = strings.TrimSpace(h.configInfo.LDAPAuth.ProviderDisplayName)
+		localLoginEnabled = h.configInfo.LDAPAuth.LocalLoginEnabled()
+	}
+
+	c.JSON(http.StatusOK, &types.LDAPConfigResponse{
+		Success:             true,
+		Enabled:             enabled,
+		LocalLoginEnabled:   localLoginEnabled,
+		ProviderDisplayName: providerDisplayName,
+	})
+}
+
+// LDAPLogin godoc
+// @Summary      LDAP登录
+// @Description  使用LDAP账号密码认证，成功后签发WeKnora本地访问令牌
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.LDAPLoginRequest  true  "LDAP登录请求参数"
+// @Success      200      {object}  types.LoginResponse
+// @Failure      401      {object}  errors.AppError  "认证失败"
+// @Router       /auth/ldap/login [post]
+func (h *AuthHandler) LDAPLogin(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req types.LDAPLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse LDAP login request parameters", err)
+		appErr := errors.NewValidationError("Invalid LDAP login parameters").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	response, err := h.userService.LoginWithLDAP(ctx, &req)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to login with LDAP: %v", err)
+		appErr := errors.NewUnauthorizedError("LDAP login failed").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+	if !response.Success {
+		logger.Warnf(ctx, "LDAP login failed: %s", response.Message)
+		c.JSON(http.StatusUnauthorized, response)
+		return
+	}
+
+	logger.Infof(ctx, "User logged in successfully via LDAP: %s", secutils.SanitizeForLog(req.Username))
+	c.JSON(http.StatusOK, response)
 }
 
 // GetOIDCAuthorizationURL godoc
@@ -458,6 +531,188 @@ func (h *AuthHandler) OIDCRedirectCallback(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, frontendRedirectURI+"#oidc_result="+urlQueryEscape(payload))
+}
+
+// GetPortalSSOConfig godoc
+// @Summary      获取门户 SSO 配置
+// @Description  返回门户加密串 SSO 是否启用及 token 参数名
+// @Tags         认证
+// @Produce      json
+// @Success      200  {object}  types.PortalSSOConfigResponse
+// @Router       /auth/portal/config [get]
+func (h *AuthHandler) GetPortalSSOConfig(c *gin.Context) {
+	enabled := false
+	tokenParam := "token"
+	hideLoginForm := false
+	if h.configInfo != nil && h.configInfo.PortalSSOAuth != nil {
+		enabled = h.configInfo.PortalSSOAuth.Enable
+		if v := strings.TrimSpace(h.configInfo.PortalSSOAuth.TokenParam); v != "" {
+			tokenParam = v
+		}
+		hideLoginForm = h.configInfo.PortalSSOAuth.HideLoginForm
+	}
+	c.JSON(http.StatusOK, &types.PortalSSOConfigResponse{
+		Success:       true,
+		Enabled:       enabled,
+		TokenParam:    tokenParam,
+		HideLoginForm: hideLoginForm,
+	})
+}
+
+// PortalSSOLogin godoc
+// @Summary      门户 SSO 登录
+// @Description  解析企业门户传来的 AES 加密用户信息串，完成登录并重定向回前端
+// @Tags         认证
+// @Param        token  query  string  true  "门户加密 token"
+// @Success      302
+// @Router       /auth/portal/login [get]
+func (h *AuthHandler) PortalSSOLogin(c *gin.Context) {
+	ctx := c.Request.Context()
+	frontendRedirectURI := h.frontendRedirectPath()
+
+	if h.configInfo == nil || h.configInfo.PortalSSOAuth == nil || !h.configInfo.PortalSSOAuth.Enable {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("portal_sso_disabled"))
+		return
+	}
+	cfg := h.configInfo.PortalSSOAuth
+	param := strings.TrimSpace(cfg.TokenParam)
+	if param == "" {
+		param = "token"
+	}
+	token := strings.TrimSpace(c.Query(param))
+	if token == "" {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("missing_token"))
+		return
+	}
+
+	key, err := secutils.ParsePortalSSOKey(cfg.AESKey)
+	if err != nil {
+		logger.Errorf(ctx, "Portal SSO key invalid: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("misconfigured"))
+		return
+	}
+	maxAge := time.Duration(cfg.MaxAgeSeconds) * time.Second
+	if maxAge <= 0 {
+		maxAge = 5 * time.Minute
+	}
+	payload, err := secutils.ParsePortalSSOPayload(token, key, maxAge)
+	if err != nil {
+		logger.Warnf(ctx, "Portal SSO token rejected: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("invalid_token")+"&portal_sso_error_description="+urlQueryEscape(err.Error()))
+		return
+	}
+
+	resp, err := h.userService.LoginWithPortalSSO(ctx, &types.PortalSSOUserInfo{
+		Email: payload.Email,
+		Name:  payload.Name,
+	}, h.resolveDefaultTenantMode(ctx))
+	if err != nil {
+		logger.Errorf(ctx, "Portal SSO login failed: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("login_failed")+"&portal_sso_error_description="+urlQueryEscape(err.Error()))
+		return
+	}
+	if !resp.Success {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("login_failed")+"&portal_sso_error_description="+urlQueryEscape(resp.Message))
+		return
+	}
+
+	oidcShape := &types.OIDCCallbackResponse{
+		Success:      resp.Success,
+		Message:      resp.Message,
+		User:         resp.User,
+		Tenant:       resp.ActiveTenant,
+		Memberships:  resp.Memberships,
+		Token:        resp.Token,
+		RefreshToken: resp.RefreshToken,
+	}
+	encoded, err := encodeOIDCCallbackPayload(oidcShape)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to encode portal SSO callback payload: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("payload_encode_failed"))
+		return
+	}
+	c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_result="+urlQueryEscape(encoded))
+}
+
+// DongjianSSOLogin godoc
+// @Summary      洞鉴门户 RSA SSO 登录
+// @Description  解密洞鉴门户 RSA 加密的 ssoToken JSON，按 email 登录并重定向回前端
+// @Tags         认证
+// @Param        ssoToken  query  string  true  "RSA 加密的 JSON（PKCS#1 v1.5 或 OAEP-SHA256）"
+// @Success      302
+// @Router       /auth/dongjian/config [get]
+func (h *AuthHandler) DongjianSSOLogin(c *gin.Context) {
+	ctx := c.Request.Context()
+	frontendRedirectURI := h.frontendRedirectPath()
+
+	if h.configInfo == nil || h.configInfo.DongjianSSOAuth == nil || !h.configInfo.DongjianSSOAuth.Enable {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("dongjian_sso_disabled"))
+		return
+	}
+	cfg := h.configInfo.DongjianSSOAuth
+	token := strings.TrimSpace(c.Query("ssoToken"))
+	if token == "" {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("missing_ssoToken"))
+		return
+	}
+
+	privateKey, err := secutils.ParseRSAPrivateKeyPEM(cfg.RSAPrivateKey)
+	if err != nil {
+		logger.Errorf(ctx, "Dongjian SSO private key invalid: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("misconfigured"))
+		return
+	}
+	payload, err := secutils.ParseDongjianSSOToken(token, privateKey, strings.TrimSpace(cfg.ClientID))
+	if err != nil {
+		logger.Warnf(ctx, "Dongjian SSO token rejected: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("invalid_ssoToken")+"&portal_sso_error_description="+urlQueryEscape(err.Error()))
+		return
+	}
+
+	displayName := payload.Name
+	if displayName == "" {
+		displayName = payload.Username
+	}
+	resp, err := h.userService.LoginWithDongjianSSO(ctx, &types.PortalSSOUserInfo{
+		Email: payload.Email,
+		Name:  displayName,
+	}, h.resolveDefaultTenantMode(ctx))
+	if err != nil {
+		logger.Errorf(ctx, "Dongjian SSO login failed: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("login_failed")+"&portal_sso_error_description="+urlQueryEscape(err.Error()))
+		return
+	}
+	if !resp.Success {
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("login_failed")+"&portal_sso_error_description="+urlQueryEscape(resp.Message))
+		return
+	}
+
+	oidcShape := &types.OIDCCallbackResponse{
+		Success:      resp.Success,
+		Message:      resp.Message,
+		User:         resp.User,
+		Tenant:       resp.ActiveTenant,
+		Memberships:  resp.Memberships,
+		Token:        resp.Token,
+		RefreshToken: resp.RefreshToken,
+	}
+	encoded, err := encodeOIDCCallbackPayload(oidcShape)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to encode dongjian SSO callback payload: %v", err)
+		c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_error="+urlQueryEscape("payload_encode_failed"))
+		return
+	}
+	c.Redirect(http.StatusFound, frontendRedirectURI+"#portal_sso_result="+urlQueryEscape(encoded))
+}
+
+func (h *AuthHandler) frontendRedirectPath() string {
+	base := "/"
+	if h.configInfo != nil {
+		if p := strings.TrimSpace(h.configInfo.FrontendBasePath); p != "" {
+			base = strings.TrimRight(p, "/") + "/"
+		}
+	}
+	return base
 }
 
 func encodeOIDCCallbackPayload(resp *types.OIDCCallbackResponse) (string, error) {

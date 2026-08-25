@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -135,6 +138,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 	if req.Username == "" || req.Email == "" || req.Password == "" {
 		return nil, errors.New("username, email and password are required")
 	}
+	req.Email = secutils.NormalizeEmail(req.Email)
 
 	// Check if user already exists
 	existingUser, _ := s.userRepo.GetUserByEmail(ctx, req.Email)
@@ -226,6 +230,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 // Login authenticates a user and returns tokens
 func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*types.LoginResponse, error) {
 	logger.Info(ctx, "Start user login")
+	req.Email = secutils.NormalizeEmail(req.Email)
 	// Get user by email
 	user, err := s.userRepo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
@@ -509,6 +514,7 @@ func (s *userService) LoginWithOIDC(
 	if strings.TrimSpace(userInfo.Email) == "" {
 		return nil, errors.New("OIDC provider did not return email")
 	}
+	userInfo.Email = secutils.NormalizeEmail(userInfo.Email)
 
 	user, err := s.userRepo.GetUserByEmail(ctx, userInfo.Email)
 	if err != nil && !isUserLookupNotFound(err) {
@@ -571,9 +577,9 @@ func (s *userService) GetUsersByIDs(ctx context.Context, ids []string) (map[stri
 	return s.userRepo.GetUsersByIDs(ctx, ids)
 }
 
-// GetUserByEmail gets a user by email
+// GetUserByEmail gets a user by email (case-insensitive).
 func (s *userService) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
-	return s.userRepo.GetUserByEmail(ctx, email)
+	return s.userRepo.GetUserByEmail(ctx, secutils.NormalizeEmail(email))
 }
 
 // GetUserByUsername gets a user by username
@@ -1457,6 +1463,467 @@ func validateOIDCEndpoints(cfg *config.OIDCAuthConfig) error {
 	return nil
 }
 
+type ldapResolvedUser struct {
+	DN       string
+	Username string
+	Email    string
+}
+
+// LoginWithLDAP authenticates a user against LDAP and returns local login tokens.
+func (s *userService) LoginWithLDAP(ctx context.Context, req *types.LDAPLoginRequest) (*types.LoginResponse, error) {
+	cfg, err := s.getLDAPConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	input := strings.TrimSpace(req.Username)
+	if input == "" || req.Password == "" {
+		return &types.LoginResponse{Success: false, Message: "Invalid username or password"}, nil
+	}
+
+	ldapUser, err := s.authenticateLDAPUser(ctx, cfg, input, req.Password)
+	if err != nil {
+		logger.Warnf(ctx, "LDAP authentication failed for %s: %v", secutils.SanitizeForLog(input), err)
+		return &types.LoginResponse{Success: false, Message: "Invalid username or password"}, nil
+	}
+	if strings.TrimSpace(ldapUser.Email) == "" {
+		return nil, errors.New("LDAP user did not return email")
+	}
+	ldapUser.Email = secutils.NormalizeEmail(ldapUser.Email)
+
+	user, err := s.userRepo.GetUserByEmail(ctx, ldapUser.Email)
+	if err != nil && !isUserLookupNotFound(err) {
+		return nil, fmt.Errorf("failed to query user by email: %w", err)
+	}
+	if isUserLookupNotFound(err) || user == nil {
+		user, err = s.provisionLDAPUser(ctx, ldapUser)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if !user.IsActive {
+		return &types.LoginResponse{Success: false, Message: "Account is disabled"}, nil
+	}
+
+	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
+	}
+
+	var tenant *types.Tenant
+	if resolvedTenantID > 0 {
+		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
+			tenant = t
+		} else {
+			logger.Warnf(ctx, "LDAP login: failed to load tenant %d for user %s: %v",
+				resolvedTenantID, user.ID, terr)
+		}
+	}
+
+	return &types.LoginResponse{
+		Success:      true,
+		Message:      "Login successful",
+		User:         user,
+		ActiveTenant: tenant,
+		Memberships:  s.buildMembershipsForUser(ctx, user, tenant),
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+// LoginWithPortalSSO trusts an encrypted payload from the enterprise portal,
+// resolves the local user by email, auto-provisions on first login, and issues JWTs.
+func (s *userService) LoginWithPortalSSO(
+	ctx context.Context,
+	info *types.PortalSSOUserInfo,
+	provisioning types.TenantProvisioningMode,
+) (*types.LoginResponse, error) {
+	if info == nil || strings.TrimSpace(info.Email) == "" {
+		return nil, errors.New("portal SSO email is required")
+	}
+	email := strings.ToLower(strings.TrimSpace(info.Email))
+
+	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil && !isUserLookupNotFound(err) {
+		return nil, fmt.Errorf("failed to query user by email: %w", err)
+	}
+	if isUserLookupNotFound(err) || user == nil {
+		user, err = s.provisionPortalSSOUser(ctx, info, provisioning)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if !user.IsActive {
+		return &types.LoginResponse{Success: false, Message: "Account is disabled"}, nil
+	}
+
+	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
+	}
+
+	var tenant *types.Tenant
+	if resolvedTenantID > 0 {
+		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
+			tenant = t
+		} else {
+			logger.Warnf(ctx, "Portal SSO login: failed to load tenant %d for user %s: %v",
+				resolvedTenantID, user.ID, terr)
+		}
+	}
+
+	return &types.LoginResponse{
+		Success:      true,
+		Message:      "Login successful",
+		User:         user,
+		ActiveTenant: tenant,
+		Memberships:  s.buildMembershipsForUser(ctx, user, tenant),
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+// LoginWithDongjianSSO resolves the local user by email first. New users must
+// exist in LDAP before they are auto-provisioned locally.
+func (s *userService) LoginWithDongjianSSO(
+	ctx context.Context,
+	info *types.PortalSSOUserInfo,
+	provisioning types.TenantProvisioningMode,
+) (*types.LoginResponse, error) {
+	if info == nil || strings.TrimSpace(info.Email) == "" {
+		return nil, errors.New("dongjian SSO email is required")
+	}
+	email := secutils.NormalizeEmail(info.Email)
+
+	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil && !isUserLookupNotFound(err) {
+		return nil, fmt.Errorf("failed to query user by email: %w", err)
+	}
+	if isUserLookupNotFound(err) || user == nil {
+		ldapUser, err := s.lookupLDAPUserByEmail(ctx, email)
+		if err != nil {
+			logger.Warnf(ctx, "Dongjian SSO LDAP lookup failed for %s: %v", secutils.SanitizeForLog(email), err)
+			return &types.LoginResponse{Success: false, Message: "User not found"}, nil
+		}
+		if displayName := strings.TrimSpace(info.Name); displayName != "" && strings.TrimSpace(ldapUser.Username) == "" {
+			ldapUser.Username = displayName
+		}
+		user, err = s.provisionDongjianSSOUser(ctx, ldapUser, provisioning)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if !user.IsActive {
+		return &types.LoginResponse{Success: false, Message: "Account is disabled"}, nil
+	}
+
+	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
+	}
+
+	var tenant *types.Tenant
+	if resolvedTenantID > 0 {
+		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
+			tenant = t
+		} else {
+			logger.Warnf(ctx, "Dongjian SSO login: failed to load tenant %d for user %s: %v",
+				resolvedTenantID, user.ID, terr)
+		}
+	}
+
+	return &types.LoginResponse{
+		Success:      true,
+		Message:      "Login successful",
+		User:         user,
+		ActiveTenant: tenant,
+		Memberships:  s.buildMembershipsForUser(ctx, user, tenant),
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+func (s *userService) provisionPortalSSOUser(
+	ctx context.Context,
+	info *types.PortalSSOUserInfo,
+	provisioning types.TenantProvisioningMode,
+) (*types.User, error) {
+	username := s.generateExternalUsername(ctx, info.Name, info.Email, "portal-user")
+	randomPassword, err := generateRandomString(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password for portal SSO user: %w", err)
+	}
+	user, err := s.Register(ctx, &types.RegisterRequest{
+		Username:           username,
+		Email:              strings.ToLower(strings.TrimSpace(info.Email)),
+		Password:           randomPassword,
+		TenantProvisioning: provisioning,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to auto-provision portal SSO user: %w", err)
+	}
+	return user, nil
+}
+
+func (s *userService) getLDAPConfig() (*config.LDAPAuthConfig, error) {
+	if s.config == nil || s.config.LDAPAuth == nil || !s.config.LDAPAuth.Enable {
+		return nil, errors.New("LDAP login is disabled")
+	}
+	cfg := *s.config.LDAPAuth
+	if cfg.UserInfoMapping == nil {
+		cfg.UserInfoMapping = &config.LDAPUserInfoMapping{Username: "cn", Email: "mail"}
+	}
+	return &cfg, nil
+}
+
+func (s *userService) authenticateLDAPUser(ctx context.Context, cfg *config.LDAPAuthConfig, username, password string) (*ldapResolvedUser, error) {
+	conn, err := dialLDAP(cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if strings.TrimSpace(cfg.BindDN) != "" {
+		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
+		}
+	}
+
+	ldapUser, err := searchLDAPUser(conn, cfg, username)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(ldapUser.DN) == "" {
+		return nil, errors.New("LDAP user DN is empty")
+	}
+
+	if err := conn.Bind(ldapUser.DN, password); err != nil {
+		return nil, fmt.Errorf("LDAP user bind failed: %w", err)
+	}
+	logger.Infof(ctx, "LDAP authentication successful for %s", secutils.SanitizeForLog(ldapUser.Email))
+	return ldapUser, nil
+}
+
+func (s *userService) lookupLDAPUserByEmail(ctx context.Context, email string) (*ldapResolvedUser, error) {
+	cfg, err := s.getLDAPConfig()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialLDAP(cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if strings.TrimSpace(cfg.BindDN) != "" {
+		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
+		}
+	}
+
+	ldapUser, err := searchLDAPUserByEmail(conn, cfg, email)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(ldapUser.Email) == "" {
+		ldapUser.Email = secutils.NormalizeEmail(email)
+	} else {
+		ldapUser.Email = secutils.NormalizeEmail(ldapUser.Email)
+	}
+	return ldapUser, nil
+}
+
+func dialLDAP(cfg *config.LDAPAuthConfig) (*ldap.Conn, error) {
+	scheme := "ldap"
+	if cfg.UseSSL {
+		scheme = "ldaps"
+	}
+	addr := fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, cfg.Port)
+	conn, err := ldap.DialURL(addr, ldap.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}))
+	if err != nil {
+		return nil, fmt.Errorf("LDAP dial failed: %w", err)
+	}
+	if cfg.StartTLS {
+		tlsConfig := &tls.Config{
+			ServerName:         cfg.Host,
+			InsecureSkipVerify: cfg.SkipVerify, //nolint:gosec // Operator-controlled for private LDAP deployments.
+		}
+		if err := conn.StartTLS(tlsConfig); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("LDAP StartTLS failed: %w", err)
+		}
+	}
+	return conn, nil
+}
+
+func searchLDAPUser(conn *ldap.Conn, cfg *config.LDAPAuthConfig, username string) (*ldapResolvedUser, error) {
+	userAttr := strings.TrimSpace(cfg.UserIDAttribute)
+	if userAttr == "" {
+		userAttr = "uid"
+	}
+	filter := buildLDAPUserFilter(cfg.UserFilter, userAttr, username)
+	usernameAttr := strings.TrimSpace(cfg.UserInfoMapping.Username)
+	emailAttr := strings.TrimSpace(cfg.UserInfoMapping.Email)
+	attrs := uniqueLDAPAttributes(userAttr, usernameAttr, emailAttr)
+
+	req := ldap.NewSearchRequest(
+		cfg.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		1,
+		0,
+		false,
+		filter,
+		attrs,
+		nil,
+	)
+	result, err := conn.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP search failed: %w", err)
+	}
+	if len(result.Entries) == 0 {
+		return nil, errors.New("LDAP user not found")
+	}
+
+	entry := result.Entries[0]
+	resolved := &ldapResolvedUser{
+		DN:       entry.DN,
+		Username: strings.TrimSpace(entry.GetAttributeValue(usernameAttr)),
+		Email:    strings.TrimSpace(entry.GetAttributeValue(emailAttr)),
+	}
+	if resolved.Username == "" {
+		resolved.Username = strings.TrimSpace(entry.GetAttributeValue(userAttr))
+	}
+	if resolved.Username == "" && resolved.Email != "" {
+		resolved.Username = strings.Split(resolved.Email, "@")[0]
+	}
+	return resolved, nil
+}
+
+func searchLDAPUserByEmail(conn *ldap.Conn, cfg *config.LDAPAuthConfig, email string) (*ldapResolvedUser, error) {
+	emailAttr := strings.TrimSpace(cfg.UserInfoMapping.Email)
+	if emailAttr == "" {
+		emailAttr = "mail"
+	}
+	userAttr := strings.TrimSpace(cfg.UserIDAttribute)
+	if userAttr == "" {
+		userAttr = "uid"
+	}
+	normalized := secutils.NormalizeEmail(email)
+	if normalized == "" {
+		return nil, errors.New("LDAP email lookup requires email")
+	}
+	filter := fmt.Sprintf("(%s=%s)", emailAttr, ldap.EscapeFilter(normalized))
+	usernameAttr := strings.TrimSpace(cfg.UserInfoMapping.Username)
+	attrs := uniqueLDAPAttributes(userAttr, usernameAttr, emailAttr)
+
+	req := ldap.NewSearchRequest(
+		cfg.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		1,
+		0,
+		false,
+		filter,
+		attrs,
+		nil,
+	)
+	result, err := conn.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP search failed: %w", err)
+	}
+	if len(result.Entries) == 0 {
+		return nil, errors.New("LDAP user not found")
+	}
+
+	entry := result.Entries[0]
+	resolved := &ldapResolvedUser{
+		DN:       entry.DN,
+		Username: strings.TrimSpace(entry.GetAttributeValue(usernameAttr)),
+		Email:    strings.TrimSpace(entry.GetAttributeValue(emailAttr)),
+	}
+	if resolved.Username == "" {
+		resolved.Username = strings.TrimSpace(entry.GetAttributeValue(userAttr))
+	}
+	if resolved.Username == "" && resolved.Email != "" {
+		resolved.Username = strings.Split(resolved.Email, "@")[0]
+	}
+	return resolved, nil
+}
+
+func buildLDAPUserFilter(template, userAttr, username string) string {
+	escaped := ldap.EscapeFilter(strings.TrimSpace(username))
+	filter := strings.TrimSpace(template)
+	if filter == "" {
+		filter = fmt.Sprintf("(%s={username})", userAttr)
+	}
+	filter = strings.ReplaceAll(filter, "{username}", escaped)
+	filter = strings.ReplaceAll(filter, "{input}", escaped)
+	return filter
+}
+
+func uniqueLDAPAttributes(attrs ...string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(attrs))
+	for _, attr := range attrs {
+		attr = strings.TrimSpace(attr)
+		if attr == "" {
+			continue
+		}
+		if _, ok := seen[attr]; ok {
+			continue
+		}
+		seen[attr] = struct{}{}
+		result = append(result, attr)
+	}
+	return result
+}
+
+func (s *userService) provisionLDAPUser(ctx context.Context, info *ldapResolvedUser) (*types.User, error) {
+	username := s.generateExternalUsername(ctx, info.Username, info.Email, "ldap-user")
+	randomPassword, err := generateRandomString(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password for LDAP user: %w", err)
+	}
+	user, err := s.Register(ctx, &types.RegisterRequest{
+		Username: username,
+		Email:    secutils.NormalizeEmail(info.Email),
+		Password: randomPassword,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to auto-provision LDAP user: %w", err)
+	}
+	return user, nil
+}
+
+func (s *userService) provisionDongjianSSOUser(
+	ctx context.Context,
+	info *ldapResolvedUser,
+	provisioning types.TenantProvisioningMode,
+) (*types.User, error) {
+	username := s.generateExternalUsername(ctx, info.Username, info.Email, "ldap-user")
+	randomPassword, err := generateRandomString(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password for Dongjian SSO user: %w", err)
+	}
+	user, err := s.Register(ctx, &types.RegisterRequest{
+		Username:           username,
+		Email:              secutils.NormalizeEmail(info.Email),
+		Password:           randomPassword,
+		TenantProvisioning: provisioning,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to auto-provision Dongjian SSO user: %w", err)
+	}
+	return user, nil
+}
+
 func (s *userService) getOIDCConfig(ctx context.Context) (*config.OIDCAuthConfig, error) {
 	if s.config == nil || s.config.OIDCAuth == nil || !s.config.OIDCAuth.Enable {
 		return nil, errors.New("OIDC login is disabled")
@@ -1673,7 +2140,7 @@ func (s *userService) provisionOIDCUser(
 	info *types.OIDCUserInfo,
 	provisioning types.TenantProvisioningMode,
 ) (*types.User, error) {
-	username := s.generateOIDCUsername(ctx, info)
+	username := s.generateExternalUsername(ctx, info.Username, info.Email, "oidc-user")
 	randomPassword, err := generateRandomString(32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate password for OIDC user: %w", err)
@@ -1681,7 +2148,7 @@ func (s *userService) provisionOIDCUser(
 
 	user, err := s.Register(ctx, &types.RegisterRequest{
 		Username:           username,
-		Email:              info.Email,
+		Email:              secutils.NormalizeEmail(info.Email),
 		Password:           randomPassword,
 		TenantProvisioning: provisioning,
 	})
@@ -1698,13 +2165,13 @@ func (s *userService) provisionOIDCUser(
 	return user, nil
 }
 
-func (s *userService) generateOIDCUsername(ctx context.Context, info *types.OIDCUserInfo) string {
-	base := sanitizeUsernameCandidate(info.Username)
+func (s *userService) generateExternalUsername(ctx context.Context, username, email, fallback string) string {
+	base := sanitizeUsernameCandidate(username)
 	if base == "" {
-		base = sanitizeUsernameCandidate(strings.Split(info.Email, "@")[0])
+		base = sanitizeUsernameCandidate(strings.Split(email, "@")[0])
 	}
 	if base == "" {
-		base = "oidc-user"
+		base = fallback
 	}
 
 	candidate := base
@@ -1714,7 +2181,7 @@ func (s *userService) generateOIDCUsername(ctx context.Context, info *types.OIDC
 			return candidate
 		}
 		if err != nil && !isUserLookupNotFound(err) {
-			logger.Warnf(ctx, "Failed to check existing OIDC username %q: %v", candidate, err)
+			logger.Warnf(ctx, "Failed to check existing external username %q: %v", candidate, err)
 		}
 		candidate = fmt.Sprintf("%s-%d", base, i+1)
 	}
@@ -2003,7 +2470,8 @@ func sanitizeUsernameCandidate(value string) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' ||
+			(r >= 0x4e00 && r <= 0x9fff) {
 			b.WriteRune(r)
 			lastDash = false
 			continue

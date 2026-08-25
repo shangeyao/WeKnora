@@ -4537,6 +4537,13 @@ export default {
   auth: {
     login: '로그인',
     logout: '로그아웃',
+    account: '계정',
+    accountPlaceholder: '이메일 또는 LDAP 계정을 입력하세요',
+    accountRequired: '계정을 입력하세요',
+    ldapLogin: 'LDAP로 로그인',
+    ldapLoginWithProvider: '{provider}(으)로 로그인',
+    loggingInWithLDAP: 'LDAP로 로그인 중...',
+    ldapLoginFailed: 'LDAP 로그인 실패',
     oidcLogin: 'OIDC로 로그인',
     oidcLoginWithProvider: '{provider}(으)로 로그인',
     redirectingToOIDC: 'ID 공급자로 이동하는 중...',

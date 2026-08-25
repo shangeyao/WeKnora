@@ -4,6 +4,7 @@ import { generateRandomString, MAX_FILE_SIZE_MB, MAX_SKILL_BUNDLE_SIZE_MB } from
 import i18n from '@/i18n'
 import { getApiBaseUrl } from './api-base';
 import { isSkillBundleUploadUrl } from './uploadLimit';
+import { isAppPath, pathnameStartsWithAppPath, resolveAppPath } from './app-path';
 
 const t = (key: string) => i18n.global.t(key)
 
@@ -77,7 +78,7 @@ let failedQueue: Array<{ resolve: Function; reject: Function }> = [];
 // must surface to the page (e.g. expired token), not trigger the
 // refresh-then-redirect-to-login flow (issue #1617). '/auth/register' already
 // covers '/auth/register-by-invite' via substring match.
-const PUBLIC_AUTH_PATHS = ['/auth/auto-setup', '/auth/login', '/auth/register', '/auth/oidc/', '/auth/invitations/lookup', '/api/v1/embed/'];
+const PUBLIC_AUTH_PATHS = ['/auth/auto-setup', '/auth/login', '/auth/register', '/auth/ldap/', '/auth/oidc/', '/auth/portal/', '/auth/dongjian/', '/auth/invitations/lookup', '/api/v1/embed/'];
 
 function isPublicAuthRequest(url?: string): boolean {
   if (!url) return false;
@@ -99,15 +100,15 @@ const processQueue = (error: any, token: string | null = null) => {
 
 function isEmbedPage(): boolean {
   if (typeof window === 'undefined') return false;
-  return window.location.pathname.startsWith('/embed/');
+  return pathnameStartsWithAppPath(window.location.pathname, '/embed/');
 }
 
 function redirectToLogin() {
   if (typeof window === 'undefined') return;
-  if (window.location.pathname === '/login') return;
-  // Embed 渠道用 Embed token 鉴权，匿名访问不应被踢到登录页
+  const loginPath = resolveAppPath('/login');
+  if (isAppPath(window.location.pathname, '/login')) return;
   if (isEmbedPage()) return;
-  window.location.href = '/login';
+  window.location.href = loginPath;
 }
 
 instance.interceptors.response.use(

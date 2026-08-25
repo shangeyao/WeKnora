@@ -4539,6 +4539,13 @@ export default {
   auth: {
     login: '登录',
     logout: '退出',
+    account: '账号',
+    accountPlaceholder: '请输入邮箱或 LDAP 账号',
+    accountRequired: '请输入账号',
+    ldapLogin: '使用 LDAP 登录',
+    ldapLoginWithProvider: '使用 {provider} 登录',
+    loggingInWithLDAP: '正在通过 LDAP 登录...',
+    ldapLoginFailed: 'LDAP 登录失败',
     oidcLogin: '使用 OIDC 登录',
     oidcLoginWithProvider: '使用 {provider} 登录',
     redirectingToOIDC: '正在跳转到身份提供商...',

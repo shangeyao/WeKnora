@@ -37,10 +37,15 @@ function isSafeLiteRestoreTarget(path: string) {
   return path.startsWith('/platform/') && !path.startsWith('/platform/organizations')
 }
 
-function hasPendingOIDCCallback() {
+function hasPendingAuthCallback() {
   if (typeof window === 'undefined') return false
   const hash = window.location.hash || ''
-  return hash.includes('oidc_result=') || hash.includes('oidc_error=')
+  return (
+    hash.includes('oidc_result=') ||
+    hash.includes('oidc_error=') ||
+    hash.includes('portal_sso_result=') ||
+    hash.includes('portal_sso_error=')
+  )
 }
 
 const router = createRouter({
@@ -309,9 +314,9 @@ let liteDeepLinkRestoreDone = false
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
-  // OIDC 回跳登录结果依赖 App.vue 在挂载后消费 URL hash。
-  // 如果这里先按“未登录”拦截到 /login，会导致回调结果没有机会落盘。
-  if (hasPendingOIDCCallback()) {
+  // OIDC / Portal SSO / 洞鉴 SSO 回跳结果依赖 App.vue 在挂载后消费 URL hash。
+  // 如果这里先按“未登录”拦截到 /login，hash 会被清掉，回调结果无法落盘。
+  if (hasPendingAuthCallback()) {
     next()
     return
   }

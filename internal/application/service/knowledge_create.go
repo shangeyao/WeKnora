@@ -70,6 +70,11 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	// Early reject before the whole-file hash below. resolveFileImportProcessConfig
 	// gates the same extension set, but this path must keep returning
 	// ErrInvalidFileType rather than the shared gate's localized message.
+	// Shared-space uploads keep the caller in auth ctx but files must live under
+	// the KB owner's storage backend (same as preview/download).
+	storageCtx := s.ctxWithOwnerTenantForKB(ctx, kb.TenantID)
+	ownerTenantID := kb.TenantID
+
 	logger.Infof(ctx, "Checking file type: %s", fileName)
 	if !isValidFileType(fileName) {
 		logger.Error(ctx, "Invalid file type")
@@ -85,9 +90,8 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	}
 
 	// Check if file already exists
-	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	logger.Infof(ctx, "Checking if file exists, tenant ID: %d", tenantID)
-	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, &types.KnowledgeCheckParams{
+	logger.Infof(ctx, "Checking if file exists, tenant ID: %d", ownerTenantID)
+	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(storageCtx, ownerTenantID, kbID, &types.KnowledgeCheckParams{
 		Type:     "file",
 		FileName: fileName,
 		FileType: getFileType(fileName),
@@ -108,8 +112,8 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		return existingKnowledge, types.NewDuplicateFileError(existingKnowledge)
 	}
 
-	// Check storage quota
-	tenantInfo := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
+	// Check storage quota (count against KB owner workspace)
+	tenantInfo := storageCtx.Value(types.TenantInfoContextKey).(*types.Tenant)
 	if tenantInfo.StorageQuota > 0 && tenantInfo.StorageUsed >= tenantInfo.StorageQuota {
 		logger.Error(ctx, "Storage quota exceeded")
 		return nil, types.NewStorageQuotaExceededError()
@@ -153,7 +157,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	logger.Info(ctx, "Preparing knowledge record")
 	knowledge := &types.Knowledge{
 		ID:               uuid.New().String(),
-		TenantID:         tenantID,
+		TenantID:         ownerTenantID,
 		KnowledgeBaseID:  kbID,
 		Type:             "file",
 		Channel:          defaultChannel(channel),
@@ -180,8 +184,8 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	// Save the file to storage (use KB-level storage engine if configured)
 	logger.Infof(ctx, "Saving file, knowledge ID: %s", knowledge.ID)
-	fileSvc := s.resolveFileService(ctx, kb)
-	filePath, err := fileSvc.SaveFile(ctx, file, knowledge.TenantID, knowledge.ID)
+	fileSvc := s.resolveFileService(storageCtx, kb)
+	filePath, err := fileSvc.SaveFile(storageCtx, file, ownerTenantID, knowledge.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save file, knowledge ID: %s, error: %v", knowledge.ID, err)
 		return nil, err
@@ -198,7 +202,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		return nil, err
 	}
 	// Set tag relations
-	if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
+	if err := s.setAndAttachKnowledgeTags(storageCtx, ownerTenantID, kbID, knowledge, tagIDs); err != nil {
 		logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
 		return nil, err
 	}
@@ -215,7 +219,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	lang := types.LanguageFromContextOrDefault(ctx)
 	taskPayload := types.DocumentProcessPayload{
-		TenantID:                 tenantID,
+		TenantID:                 ownerTenantID,
 		KnowledgeID:              knowledge.ID,
 		KnowledgeBaseID:          kbID,
 		FilePath:                 filePath,
@@ -271,7 +275,8 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		knowledge.ID,
 	)
 
-	enqueueDataTableSummaryIfNeeded(ctx, s.task, tenantID, knowledge.ID, safeFilename, getFileType(safeFilename), kb.SummaryModelID, kb.EmbeddingModelID)
+	enqueueDataTableSummaryIfNeeded(ctx, s.task, ownerTenantID, knowledge.ID, safeFilename, getFileType(safeFilename), kb.SummaryModelID, kb.EmbeddingModelID)
+
 
 	logger.Infof(ctx, "Knowledge from file created successfully, ID: %s", knowledge.ID)
 	return knowledge, nil
@@ -1232,14 +1237,15 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	// Runs before chunking so chunks contain stable provider:// URLs.
 	var resolvedImages []docparser.StoredImage
 	if s.imageResolver != nil {
-		fileSvc := s.resolveFileService(ctx, kb)
-		afterDataURI, fromDataURI, _ := s.imageResolver.ResolveDataURIImages(ctx, clean, fileSvc, knowledge.TenantID)
+		storageCtx := s.ctxWithOwnerTenantForKB(ctx, kb.TenantID)
+		fileSvc := s.resolveFileService(storageCtx, kb)
+		afterDataURI, fromDataURI, _ := s.imageResolver.ResolveDataURIImages(storageCtx, clean, fileSvc, kb.TenantID)
 		if len(fromDataURI) > 0 {
 			logger.Infof(ctx, "Resolved %d data-URI images for manual knowledge %s", len(fromDataURI), knowledge.ID)
 			clean = afterDataURI
 			resolvedImages = append(resolvedImages, fromDataURI...)
 		}
-		updatedContent, storedImages, resolveErr := s.imageResolver.ResolveRemoteImages(ctx, clean, fileSvc, knowledge.TenantID)
+		updatedContent, storedImages, resolveErr := s.imageResolver.ResolveRemoteImages(storageCtx, clean, fileSvc, kb.TenantID)
 		if resolveErr != nil {
 			logger.Warnf(ctx, "Remote image resolution partially failed: %v", resolveErr)
 		}

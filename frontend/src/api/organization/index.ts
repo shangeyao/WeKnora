@@ -94,6 +94,8 @@ export interface SharedKnowledgeBase {
   organization_id: string
   org_name: string
   permission: 'admin' | 'editor' | 'viewer'
+  /** Effective permission for current user = min(permission, my_role_in_org) */
+  my_permission?: 'admin' | 'editor' | 'viewer'
   source_tenant_id: number
   shared_at: string
 }
@@ -392,7 +394,10 @@ export async function deleteOrganization(id: string): Promise<ApiResponse<void>>
  */
 export async function joinOrganization(req: JoinOrganizationRequest): Promise<ApiResponse<Organization>> {
   try {
-    const response = await post('/api/v1/organizations/join', req)
+    const response = await post('/api/v1/organizations/join', {
+      ...req,
+      invite_code: normalizeInviteCode(req.invite_code),
+    })
     return response as unknown as ApiResponse<Organization>
   } catch (error: any) {
     return { success: false, message: error.message || 'Failed to join organization' }
@@ -405,19 +410,28 @@ export async function joinOrganization(req: JoinOrganizationRequest): Promise<Ap
  */
 export async function submitJoinRequest(req: SubmitJoinRequestRequest): Promise<ApiResponse<void>> {
   try {
-    const response = await post('/api/v1/organizations/join-request', req)
+    const response = await post('/api/v1/organizations/join-request', {
+      ...req,
+      invite_code: normalizeInviteCode(req.invite_code),
+    })
     return response as unknown as ApiResponse<void>
   } catch (error: any) {
     return { success: false, message: error.message || 'Failed to submit join request' }
   }
 }
 
+import { normalizeInviteCode } from '@/utils/invite-code'
+
 /**
  * Preview organization by invite code (without joining)
  */
 export async function previewOrganization(inviteCode: string): Promise<ApiResponse<OrganizationPreview>> {
+  const code = normalizeInviteCode(inviteCode)
+  if (!code) {
+    return { success: false, message: 'Invite code is required' }
+  }
   try {
-    const response = await get(`/api/v1/organizations/preview/${inviteCode}`)
+    const response = await get(`/api/v1/organizations/preview/${encodeURIComponent(code)}`)
     return response as unknown as ApiResponse<OrganizationPreview>
   } catch (error: any) {
     return { success: false, message: error.message || 'Failed to preview organization' }

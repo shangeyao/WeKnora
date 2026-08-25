@@ -168,6 +168,52 @@ const handleGlobalOIDCCallback = async () => {
   }
 }
 
+const handleGlobalPortalSSOCallback = async () => {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
+  if (!hash) return
+
+  const params = new URLSearchParams(hash)
+  const portalError = params.get('portal_sso_error')
+  const portalErrorDescription = params.get('portal_sso_error_description')
+  const portalResult = params.get('portal_sso_result')
+
+  if (!portalError && !portalResult) return
+
+  if (portalError) {
+    clearOIDCCallbackState('/login')
+    await router.replace('/login')
+    MessagePlugin.error(portalErrorDescription || 'Portal SSO login failed')
+    return
+  }
+
+  try {
+    if (!portalResult) {
+      clearOIDCCallbackState('/login')
+      await router.replace('/login')
+      MessagePlugin.error('Portal SSO login failed')
+      return
+    }
+
+    const response = decodeOIDCResult(portalResult)
+    if (response.success) {
+      clearOIDCCallbackState('/')
+      await persistOIDCLoginResponse(response)
+      notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
+      return
+    }
+
+    clearOIDCCallbackState('/login')
+    await router.replace('/login')
+    MessagePlugin.error(response.message || 'Portal SSO login failed')
+  } catch (error: any) {
+    console.error('Global portal SSO callback handling failed:', error)
+    authStore.logout()
+    clearOIDCCallbackState('/login')
+    await router.replace('/login')
+    MessagePlugin.error(error.message || 'Portal SSO login failed')
+  }
+}
+
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null
 
 // Pending invitations poll: fires once on mount (logged-in case) and
@@ -237,6 +283,7 @@ const showPendingTenantSwitchToast = () => {
 
 onMounted(() => {
   handleGlobalOIDCCallback()
+  handleGlobalPortalSSOCallback()
   showPendingTenantSwitchToast()
 
   // Auto check for updates on startup

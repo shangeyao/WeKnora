@@ -12,12 +12,18 @@ type UserService interface {
 	Register(ctx context.Context, req *types.RegisterRequest) (*types.User, error)
 	// Login authenticates a user and returns tokens
 	Login(ctx context.Context, req *types.LoginRequest) (*types.LoginResponse, error)
+	// LoginWithLDAP authenticates a user against LDAP and returns local tokens
+	LoginWithLDAP(ctx context.Context, req *types.LDAPLoginRequest) (*types.LoginResponse, error)
 	// GetOIDCAuthorizationURL builds the third-party OIDC authorization URL
 	GetOIDCAuthorizationURL(ctx context.Context, redirectURI string) (*types.OIDCAuthURLResponse, error)
 	// LoginWithOIDC exchanges the callback code, auto-provisions users if needed, and completes login.
 	// provisioning is the default tenant mode for a newly auto-created user
 	// (resolved by the caller from auth.default_tenant_mode).
 	LoginWithOIDC(ctx context.Context, code, redirectURI string, provisioning types.TenantProvisioningMode) (*types.OIDCCallbackResponse, error)
+	// LoginWithPortalSSO validates an encrypted portal token and issues local JWTs.
+	LoginWithPortalSSO(ctx context.Context, info *types.PortalSSOUserInfo, provisioning types.TenantProvisioningMode) (*types.LoginResponse, error)
+	// LoginWithDongjianSSO resolves the user by email, verifies new users in LDAP, and issues JWTs.
+	LoginWithDongjianSSO(ctx context.Context, info *types.PortalSSOUserInfo, provisioning types.TenantProvisioningMode) (*types.LoginResponse, error)
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by

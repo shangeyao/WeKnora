@@ -800,7 +800,9 @@ export const useOrganizationStore = defineStore('organization', () => {
     const shared = sharedKnowledgeBases.value.find(
       s => s.knowledge_base?.id === kbId
     )
-    return shared?.permission || null
+    if (!shared) return null
+    const effective = (shared as { my_permission?: string }).my_permission || shared.permission
+    return (effective as 'owner' | 'admin' | 'editor' | 'viewer') || null
   }
 
   /**

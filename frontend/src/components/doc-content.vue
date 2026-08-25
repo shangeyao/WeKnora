@@ -241,7 +241,17 @@ mermaid.initialize({
     topPadding: 50
   }
 });
-const props = defineProps(["visible", "details", "knowledgeType", "sourceInfo", "canEditKB", "canDownloadKB", "parse_status", "kbId"]);
+const props = defineProps({
+  visible: Boolean,
+  details: Object,
+  knowledgeType: String,
+  sourceInfo: Object,
+  canEditKB: Boolean,
+  /** false when shared-space viewer — hide original file download */
+  canDownloadKB: { type: Boolean, default: true },
+  parse_status: String,
+  kbId: String,
+});
 const emit = defineEmits(["closeDoc", "getDoc", "questionDeleted", "summaryStateChange"]);
 
 const applySummaryState = (summaryStatus?: string, description?: string) => {
@@ -311,6 +321,7 @@ watch(
   { immediate: true },
 );
 watch(() => props.details?.id, syncMetadataDraft, { immediate: true });
+
 
 const hasTimelineSpans = ref(false);
 const timelineDrawerVisible = ref(false);

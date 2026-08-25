@@ -359,6 +359,32 @@ func (s *knowledgeService) resolveFileService(ctx context.Context, kb *types.Kno
 	return svc
 }
 
+// ctxWithOwnerTenantForKB rewrites ctx so storage/file resolution uses the KB
+// owner's tenant when a caller reaches shared knowledge via org share. Auth
+// middleware still carries the caller's TenantInfo; without this swap GetFile
+// can point at the wrong storage backend and preview/download fail for other
+// tenants even when RBAC allows read access.
+func (s *knowledgeService) ctxWithOwnerTenantForKB(ctx context.Context, ownerTenantID uint64) context.Context {
+	if ownerTenantID == 0 {
+		return ctx
+	}
+	if tenant, ok := types.TenantInfoFromContext(ctx); ok && tenant.ID == ownerTenantID {
+		if tid, ok := types.TenantIDFromContext(ctx); ok && tid == ownerTenantID {
+			return ctx
+		}
+	}
+	if s.tenantService == nil {
+		return context.WithValue(ctx, types.TenantIDContextKey, ownerTenantID)
+	}
+	owner, err := s.tenantService.GetTenantByID(ctx, ownerTenantID)
+	if err != nil || owner == nil {
+		logger.Warnf(ctx, "[storage] load owner tenant %d for shared file access: %v", ownerTenantID, err)
+		return context.WithValue(ctx, types.TenantIDContextKey, ownerTenantID)
+	}
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, ownerTenantID)
+	return context.WithValue(ctx, types.TenantInfoContextKey, owner)
+}
+
 // resolveFileServiceForPath is like resolveFileService but adds a safety check:
 // if the resolved provider doesn't match what the filePath implies, fall back to
 // the provider inferred from the file path. This protects historical data when
