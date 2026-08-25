@@ -1,0 +1,13 @@
+# Overlay local LDAP build onto upstream runtime (build context = repo root /).
+ARG WEKNORA_VERSION=v0.6.3
+FROM wechatopenai/weknora-app:${WEKNORA_VERSION}
+
+COPY --from=weknora-app-builder:local /app/WeKnora /app/WeKnora
+COPY --from=weknora-app-builder:local /app/migrations /app/migrations
+
+# gojieba (CGO) looks up dict files under the GOMODCACHE path used at compile time
+# (/root/go/pkg/mod/...). Official images ship /go/pkg/mod/github.com/yanyiwu only.
+RUN mkdir -p /root/go/pkg/mod/github.com/yanyiwu && \
+    if [ -d /go/pkg/mod/github.com/yanyiwu ]; then \
+      cp -a /go/pkg/mod/github.com/yanyiwu/. /root/go/pkg/mod/github.com/yanyiwu/; \
+    fi

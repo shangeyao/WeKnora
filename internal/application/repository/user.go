@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/Tencent/WeKnora/internal/utils"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -74,10 +75,14 @@ func (r *userRepository) GetUsersByIDs(ctx context.Context, ids []string) (map[s
 	return out, nil
 }
 
-// GetUserByEmail gets a user by email
+// GetUserByEmail gets a user by email (case-insensitive).
 func (r *userRepository) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
+	email = utils.NormalizeEmail(email)
+	if email == "" {
+		return nil, ErrUserNotFound
+	}
 	var user types.User
-	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("LOWER(email) = ?", email).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}

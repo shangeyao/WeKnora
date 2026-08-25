@@ -67,7 +67,14 @@ function resolveVueOfficePptxEntry(): string {
   }
 }
 
+const viteBasePath = (() => {
+  const raw = process.env.VITE_BASE_PATH?.trim()
+  if (!raw || raw === '/') return '/'
+  return raw.endsWith('/') ? raw : `${raw}/`
+})()
+
 export default defineConfig({
+  base: viteBasePath,
   define: {
     __FRONTEND_VERSION__: JSON.stringify(FRONTEND_VERSION),
     __FRONTEND_COMMIT__: JSON.stringify(FRONTEND_COMMIT),
