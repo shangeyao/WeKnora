@@ -96,30 +96,12 @@
     </div>
 
     <!-- Logo - Top Left -->
-    <a href="https://github.com/Tencent/WeKnora" target="_blank" class="header-logo" :title="$t('common.github')">
+    <div class="header-logo">
       <img src="@/assets/img/weknora.png" alt="WeKnora" class="logo-image" />
-    </a>
+    </div>
 
     <!-- Header Links - Top Right -->
     <div class="header-links">
-      <a href="https://weknora.weixin.qq.com" target="_blank" class="header-link" :title="$t('common.website')">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="2" y1="12" x2="22" y2="12" />
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-        </svg>
-        <span class="link-text">{{ $t('common.website') }}</span>
-      </a>
-
-      <a href="https://github.com/Tencent/WeKnora" target="_blank" class="header-link" :title="$t('common.info')">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-          <path
-            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-        </svg>
-        <span class="link-text">GitHub</span>
-      </a>
-
       <div class="language-switch">
         <button @click="toggleLanguageMenu" class="header-link" :title="currentLangOption?.label">
           <span class="lang-flag-icon">{{ currentLangOption?.flag }}</span>
@@ -195,27 +177,35 @@
           <div class="form-header">
             <h2 class="form-title">{{ $t('auth.login') }}</h2>
             <p class="form-welcome">{{ $t('auth.subtitle') }}</p>
-            <p v-if="registrationEnabled" class="form-hint">{{ $t('auth.loginHint') }}</p>
+            <p v-if="registrationEnabled && !ldapOnlyLogin" class="form-hint">{{ $t('auth.loginHint') }}</p>
           </div>
 
           <div class="form-content">
-            <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical"
+            <div v-if="portalSSORedirecting" class="portal-sso-status">
+              <p>{{ $t('auth.portalSSORedirecting') }}</p>
+            </div>
+            <div v-else-if="portalSSOEnabled && portalHideLoginForm" class="portal-sso-status">
+              <p>{{ $t('auth.portalSSOEntryOnly') }}</p>
+            </div>
+            <template v-else>
+            <t-form ref="formRef" :data="formData" :rules="loginFormRules" @submit="handleLoginSubmit" layout="vertical"
               label-align="top">
-              <t-form-item :label="$t('auth.email')" name="email">
-                <t-input v-model="formData.email" :placeholder="$t('auth.emailPlaceholder')" type="text"
-                  autocomplete="email" size="large" :disabled="loading" />
+              <t-form-item :label="$t('auth.account')" name="email">
+                <t-input v-model="formData.email" type="text"
+                  autocomplete="email" size="large" :disabled="loading || ldapLoading" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
-                <t-input v-model="formData.password" :placeholder="$t('auth.passwordPlaceholder')" type="password"
-                  autocomplete="current-password" size="large" :disabled="loading" @enter="handleLogin" />
+                <t-input v-model="formData.password" type="password"
+                  autocomplete="current-password" size="large" :disabled="loading || ldapLoading" @enter="handleLoginSubmit" />
               </t-form-item>
 
-              <t-button type="submit" theme="primary" size="large" block :loading="loading" class="submit-button">
-                {{ loading ? $t('auth.loggingIn') : $t('auth.login') }}
+              <t-button type="submit" theme="primary" size="large" block :loading="loading || ldapLoading" :disabled="ldapOnlyLogin ? oidcLoading : ldapLoading"
+                class="submit-button">
+                {{ ldapLoading ? $t('auth.loggingInWithLDAP') : (loading ? $t('auth.loggingIn') : (ldapOnlyLogin ? ldapLoginText : $t('auth.login'))) }}
               </t-button>
 
-              <div class="register-cta" v-if="registrationEnabled">
+              <div class="register-cta" v-if="registrationEnabled && !ldapOnlyLogin">
                 <div class="register-cta__divider">
                   <span>{{ $t('auth.firstTime') }}</span>
                 </div>
@@ -225,15 +215,21 @@
                 </t-button>
               </div>
 
-              <div v-if="oidcEnabled" class="oidc-divider">
+              <div v-if="oidcEnabled && (!ldapEnabled || ldapLocalLoginEnabled || ldapOnlyLogin)" class="oidc-divider">
                 <span>{{ $t('auth.orContinueWith') }}</span>
               </div>
 
-              <t-button v-if="oidcEnabled" theme="default" size="large" block :loading="oidcLoading" :disabled="loading"
-                class="oidc-button" @click="handleOIDCLogin">
+              <t-button v-if="ldapEnabled && ldapLocalLoginEnabled" theme="default" size="large" block :loading="ldapLoading"
+                :disabled="loading || oidcLoading" class="oidc-button" @click="handleLDAPLogin">
+                {{ ldapLoading ? $t('auth.loggingInWithLDAP') : ldapLoginText }}
+              </t-button>
+
+              <t-button v-if="oidcEnabled && !portalSSOEnabled" theme="default" size="large" block :loading="oidcLoading"
+                :disabled="loading || ldapLoading" class="oidc-button" @click="handleOIDCLogin">
                 {{ oidcLoading ? $t('auth.redirectingToOIDC') : oidcLoginText }}
               </t-button>
             </t-form>
+            </template>
 
             <!-- Features list -->
             <div class="login-features">
@@ -351,9 +347,12 @@ import 'swiper/css/effect-fade'
 import 'swiper/css/pagination'
 import {
   login,
+  ldapLogin,
   register,
   getOIDCAuthorizationURL,
   getOIDCConfig,
+  getLDAPConfig,
+  getPortalSSOConfig,
   autoSetup,
   getAuthConfig,
   userInfoFromApi,
@@ -362,6 +361,7 @@ import {
   type InviteLookup,
 } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
+import { resolveAppPath } from '@/utils/app-path'
 import { useI18n } from 'vue-i18n'
 
 // Import screenshot images
@@ -409,11 +409,20 @@ const registerFormRef = ref()
 
 // State management
 const loading = ref(false)
+const ldapLoading = ref(false)
 const oidcLoading = ref(false)
 const isRegisterMode = ref(false)
 const showLanguageMenu = ref(false)
+const ldapEnabled = ref(true)
+const ldapLocalLoginEnabled = ref(false)
+const ldapConfigReady = ref(false)
+const ldapProviderName = ref('')
 const oidcEnabled = ref(false)
 const oidcProviderName = ref('')
+const portalSSOEnabled = ref(false)
+const portalHideLoginForm = ref(false)
+const portalTokenParam = ref('token')
+const portalSSORedirecting = ref(false)
 // Wait for configuration before showing a registration entry.
 const registrationMode = ref('')
 const registrationEnabled = computed(() => canRegister(registrationMode.value, !!inviteLookup.value))
@@ -446,6 +455,13 @@ const oidcLoginText = computed(() => {
   }
   return t('auth.oidcLogin')
 })
+const ldapOnlyLogin = computed(() => ldapEnabled.value && !ldapLocalLoginEnabled.value)
+const ldapLoginText = computed(() => {
+  if (ldapProviderName.value) {
+    return t('auth.ldapLoginWithProvider', { provider: ldapProviderName.value })
+  }
+  return t('auth.ldapLogin')
+})
 const currentLangOption = computed(() => languageOptions.find(l => l.value === currentLanguage.value))
 
 // Login form data
@@ -463,17 +479,27 @@ const registerData = reactive<{ [key: string]: any }>({
 })
 
 // Login form validation rules
-const formRules = computed(() => ({
-  email: [
-    { required: true, message: t('auth.emailRequired'), type: 'error' },
-    { email: true, message: t('auth.emailInvalid'), type: 'error' }
-  ],
-  password: [
-    { required: true, message: t('auth.passwordRequired'), type: 'error' },
-    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
-    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' }
-  ],
-}))
+const loginFormRules = computed(() => {
+  if (ldapEnabled.value) {
+    return {
+      email: [{ required: true, message: t('auth.accountRequired'), type: 'error', trigger: 'submit' }],
+      password: [{ required: true, message: t('auth.passwordRequired'), type: 'error', trigger: 'submit' }],
+    }
+  }
+  return {
+    email: [
+      { required: true, message: t('auth.emailRequired'), type: 'error' },
+      { email: true, message: t('auth.emailInvalid'), type: 'error' }
+    ],
+    password: [
+      { required: true, message: t('auth.passwordRequired'), type: 'error' },
+      { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
+      { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
+      { pattern: /[a-zA-Z]/, message: t('auth.passwordMustContainLetter'), type: 'error' },
+      { pattern: /\d/, message: t('auth.passwordMustContainNumber'), type: 'error' }
+    ]
+  }
+})
 
 // Register form validation rules
 const registerRules = computed(() => ({
@@ -596,7 +622,39 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
   router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
 }
 
-const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
+const getBackendOIDCRedirectURI = () => `${window.location.origin}${resolveAppPath('/api/v1/auth/oidc/callback')}`
+
+const loadPortalSSOConfig = async () => {
+  try {
+    const response = await getPortalSSOConfig()
+    portalSSOEnabled.value = !!response.success && !!response.enabled
+    portalHideLoginForm.value = !!response.hide_login_form
+    portalTokenParam.value = response.token_param || 'token'
+  } catch {
+    portalSSOEnabled.value = false
+    portalHideLoginForm.value = false
+    portalTokenParam.value = 'token'
+  }
+}
+
+const redirectToDongjianSSOIfNeeded = (): boolean => {
+  const ssoToken = String(route.query.ssoToken || '').trim()
+  if (!ssoToken) return false
+  portalSSORedirecting.value = true
+  window.location.href = `${resolveAppPath('/api/v1/auth/dongjian/config')}?ssoToken=${encodeURIComponent(ssoToken)}`
+  return true
+}
+
+const redirectToPortalSSOIfNeeded = (): boolean => {
+  if (!portalSSOEnabled.value) return false
+  const param = portalTokenParam.value || 'token'
+  const token = String(route.query[param] || route.query.token || '').trim()
+  if (!token) return false
+  portalSSORedirecting.value = true
+  const loginURL = `${resolveAppPath('/api/v1/auth/portal/login')}?${encodeURIComponent(param)}=${encodeURIComponent(token)}`
+  window.location.href = loginURL
+  return true
+}
 
 const loadOIDCConfig = async () => {
   try {
@@ -607,6 +665,33 @@ const loadOIDCConfig = async () => {
     oidcEnabled.value = false
     oidcProviderName.value = ''
   }
+}
+
+const loadLDAPConfig = async () => {
+  try {
+    const response = await getLDAPConfig()
+    ldapEnabled.value = !!response.success && !!response.enabled
+    ldapLocalLoginEnabled.value = response.local_login_enabled !== false
+    ldapProviderName.value = response.provider_display_name || ''
+  } catch {
+    // 保持默认 LDAP 登录框；避免接口抖动时闪回本地登录。
+  } finally {
+    ldapConfigReady.value = true
+  }
+}
+
+void loadLDAPConfig()
+void loadOIDCConfig()
+
+const handleLoginSubmit = async () => {
+  if (!ldapConfigReady.value) {
+    await loadLDAPConfig()
+  }
+  if (ldapOnlyLogin.value) {
+    await handleLDAPLogin()
+    return
+  }
+  await handleLogin()
 }
 
 // Registration stays hidden if configuration cannot be loaded.
@@ -620,6 +705,8 @@ const loadAuthConfig = async () => {
     complexPasswordEnabled.value = false
   }
 }
+
+void loadAuthConfig()
 
 const handleOIDCLogin = async () => {
   try {
@@ -661,6 +748,37 @@ const acceptAndEnter = async (token: string) => {
     loading.value = false
     await nextTick()
     router.replace('/platform/knowledge-bases')
+  }
+}
+
+const handleLDAPLogin = async () => {
+  try {
+    if (!String(formData.email || '').trim()) {
+      MessagePlugin.error(t('auth.accountRequired'))
+      return
+    }
+    if (!String(formData.password || '')) {
+      MessagePlugin.error(t('auth.passwordRequired'))
+      return
+    }
+
+    ldapLoading.value = true
+    const response = await ldapLogin({
+      username: formData.email,
+      password: formData.password,
+    })
+
+    if (response.success) {
+      await persistLoginResponse(response)
+      notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
+    } else {
+      MessagePlugin.error(response.message || t('auth.ldapLoginFailed'))
+    }
+  } catch (error: any) {
+    console.error('LDAP 登录错误:', error)
+    MessagePlugin.error(error.message || t('auth.ldapLoginFailed'))
+  } finally {
+    ldapLoading.value = false
   }
 }
 
@@ -799,12 +917,22 @@ onMounted(async () => {
     // 3. Only enabled registration modes may create an invited account.
     await loadAuthConfig()
     isRegisterMode.value = registrationEnabled.value
+    loadLDAPConfig()
     loadOIDCConfig()
     return
   }
 
   if (authStore.isLoggedIn) {
     router.replace('/platform/knowledge-bases')
+    return
+  }
+
+  if (redirectToDongjianSSOIfNeeded()) {
+    return
+  }
+
+  await loadPortalSSOConfig()
+  if (redirectToPortalSSOIfNeeded()) {
     return
   }
 
@@ -819,9 +947,6 @@ onMounted(async () => {
   } catch {
     // Auto-setup may be unavailable outside the native Lite shell.
   }
-
-  loadOIDCConfig()
-  loadAuthConfig()
 })
 </script>
 
@@ -1192,7 +1317,6 @@ onMounted(async () => {
   top: 32px;
   left: 50px;
   z-index: 100;
-  cursor: pointer;
 
   .logo-image {
     width: 120px;
@@ -1560,6 +1684,14 @@ onMounted(async () => {
   border-radius: var(--app-radius-md);
   font-size: var(--app-text-lg);
   font-weight: 500;
+}
+
+.portal-sso-status {
+  padding: 24px 8px;
+  text-align: center;
+  color: #555;
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 .form-footer {

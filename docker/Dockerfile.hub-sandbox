@@ -1,0 +1,3 @@
+# Imported by ACR overseas build (linux/amd64).
+ARG WEKNORA_VERSION=v0.6.3
+FROM wechatopenai/weknora-sandbox:${WEKNORA_VERSION}

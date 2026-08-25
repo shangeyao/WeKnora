@@ -1,3 +1,5 @@
+import { isAppPath, pathnameStartsWithAppPath, resolveAppPath } from './app-path'
+
 /**
  * Shared access-token refresh used by both axios and the chat SSE client.
  *
@@ -58,14 +60,15 @@ export function isStreamAuthError(err: unknown): boolean {
 
 export function isEmbedPage(): boolean {
   if (typeof window === 'undefined') return false
-  return window.location.pathname.startsWith('/embed/')
+  return pathnameStartsWithAppPath(window.location.pathname, '/embed/')
 }
 
 export function redirectToLogin() {
   if (typeof window === 'undefined') return
-  if (window.location.pathname === '/login') return
+  const loginPath = resolveAppPath('/login')
+  if (isAppPath(window.location.pathname, '/login')) return
   if (isEmbedPage()) return
-  window.location.href = '/login'
+  window.location.href = loginPath
 }
 
 export function clearAuthStorage() {

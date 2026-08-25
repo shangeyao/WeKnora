@@ -36,6 +36,27 @@ func frontendBaseURLFor(cfg *config.Config) string {
 	return strings.TrimRight(candidate, "/")
 }
 
+// frontendBasePathFor returns the SPA subpath prefix (e.g. "/weknora")
+// when the UI is not served from the site root. Mirrors FRONTEND_BASE_PATH
+// on the frontend/nginx side.
+func frontendBasePathFor(cfg *config.Config) string {
+	candidate := ""
+	if cfg != nil {
+		candidate = strings.TrimSpace(cfg.FrontendBasePath)
+	}
+	if candidate == "" {
+		candidate = strings.TrimSpace(os.Getenv("FRONTEND_BASE_PATH"))
+	}
+	candidate = strings.TrimRight(candidate, "/")
+	if candidate == "" || candidate == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(candidate, "/") {
+		candidate = "/" + candidate
+	}
+	return candidate
+}
+
 // buildInviteRegisterURL composes the registration URL Owners hand
 // to invitees. Plaintext token is URL-safe by construction (base64url)
 // so no extra escaping is required.
@@ -43,7 +64,8 @@ func buildInviteRegisterURL(cfg *config.Config, plainToken string) string {
 	if plainToken == "" {
 		return ""
 	}
-	return frontendBaseURLFor(cfg) + "/register?token=" + plainToken
+	registerPath := frontendBasePathFor(cfg) + "/register?token=" + plainToken
+	return frontendBaseURLFor(cfg) + registerPath
 }
 
 // createInviteLinkRequest is the body for POST /tenants/:id/invite-links.
