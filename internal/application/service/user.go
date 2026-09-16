@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/golang-jwt/jwt/v5"
@@ -2482,10 +2483,28 @@ func sanitizeUsernameCandidate(value string) string {
 		}
 	}
 	result := strings.Trim(b.String(), "-._")
-	if len(result) > 50 {
-		result = strings.Trim(result[:50], "-._")
+	const maxUsernameRunes = 50
+	if utf8.RuneCountInString(result) > maxUsernameRunes {
+		result = truncateToRunes(result, maxUsernameRunes)
+		result = strings.Trim(result, "-._")
 	}
 	return result
+}
+
+// truncateToRunes shortens s to at most maxRunes Unicode code points without
+// splitting a UTF-8 multibyte sequence (byte slicing would corrupt CJK names).
+func truncateToRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	n := 0
+	for i := range s {
+		if n == maxRunes {
+			return s[:i]
+		}
+		n++
+	}
+	return s
 }
 
 func isUserLookupNotFound(err error) bool {

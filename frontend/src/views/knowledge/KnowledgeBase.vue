@@ -61,7 +61,7 @@ import {
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
-import { resolveKnowledgeDownloadFileName } from './knowledgeDownloadFileName';
+import { resolveKnowledgeDisplayName, resolveKnowledgeDownloadFileName } from './knowledgeDownloadFileName';
 import {
   buildUploadFileName,
   canMoveFolderTo,
@@ -1985,7 +1985,12 @@ const getDoc = (page: number) => {
   getfDetails(details.id, page)
 };
 
-const syncDocumentSummaryState = (state: { id?: string; summary_status?: string; description?: string }) => {
+const syncDocumentSummaryState = (state: {
+  id?: string;
+  summary_status?: string;
+  description?: string;
+  title?: string;
+}) => {
   if (!state?.id) return;
   const card = cardList.value.find((item: KnowledgeCard) => item.id === state.id);
   if (!card) return;
@@ -1994,6 +1999,16 @@ const syncDocumentSummaryState = (state: { id?: string; summary_status?: string;
   }
   if (typeof state.description === 'string') {
     card.description = state.description;
+  }
+  if (typeof state.title === 'string' && state.title) {
+    card.title = state.title;
+    card.display_name = resolveKnowledgeDisplayName({
+      title: state.title,
+      file_name: card.original_file_name || card.file_name,
+      type: card.type,
+      file_type: card.file_type,
+    });
+    card.file_name = card.display_name;
   }
 };
 
@@ -2194,7 +2209,11 @@ const handleCardAction = (
 ) => {
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
   if (action === 'download') return downloadKnowledge(item);
-  if (action === 'edit') return handleManualEdit(idx, item);
+  if (action === 'edit') {
+    closeCardMoreMenu(idx);
+    if (item.type === 'manual') return handleManualEdit(idx, item);
+    return openCardDetails(item);
+  }
   if (action === 'reparse') {
     if (isParseInFlight(item.parse_status)) return onReparseMenuClick(idx, item);
     return confirmRebuildKnowledge(idx, item);
@@ -2213,7 +2232,11 @@ const handleListAction = (
 ) => {
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
   if (action === 'download') return downloadKnowledge(item);
-  if (action === 'edit') return handleManualEdit(idx, item);
+  if (action === 'edit') {
+    closeCardMoreMenu(idx);
+    if (item.type === 'manual') return handleManualEdit(idx, item);
+    return openCardDetails(item);
+  }
   if (action === 'reparse') return confirmRebuildKnowledge(idx, item);
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);

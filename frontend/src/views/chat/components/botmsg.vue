@@ -114,7 +114,14 @@ import picturePreview from '@/components/picture-preview.vue';
 import ChatArtifactsDrawer from './ChatArtifactsDrawer.vue';
 import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
 import { useArtifactArriveMotion } from '@/composables/useArtifactArriveMotion';
-import { sanitizeMarkdownHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages } from '@/utils/security';
+import {
+    sanitizeMarkdownHTML,
+    safeMarkdownToHTML,
+    createSafeImage,
+    isValidImageURL,
+    hydrateProtectedFileImages,
+    clearProtectedFileFailureCache,
+} from '@/utils/security';
 import {
     artifactIndexFromEventTarget,
     hydrateArtifactImages,
@@ -237,6 +244,21 @@ const messageIdForArtifacts = computed(() => {
     // in-flight path where the SSE stream still identifies rows by request.
     return String((props.session && (props.session.id || props.session.request_id)) || '');
 });
+
+// Knowledge answers embed KB images as resource:// handles. The message-scoped
+// proxy authorizes cross-tenant shared-KB resources; plain /files only works
+// when the caller's active tenant owns the blob.
+const protectedFileAccess = computed(() => {
+    const messageId = String(props.session?.assistant_message_id || props.session?.id || '').trim();
+    if (props.sessionId && messageId) {
+        return { mode: 'message', sessionId: props.sessionId, messageId };
+    }
+    const kbId = props.session?.knowledge_references?.[0]?.knowledge_base_id;
+    if (typeof kbId === 'string' && kbId.trim()) {
+        return { mode: 'knowledgeBase', kbId: kbId.trim() };
+    }
+    return undefined;
+});
 // Set when the drawer is opened by clicking an inline artifact card, so it
 // lands directly on that file's preview instead of the list.
 const artifactPreviewIndex = ref(null);
@@ -320,6 +342,26 @@ watch(
         if (!props.session?.isAgentMode) emit('render-complete-change', ready);
     },
     { immediate: true },
+);
+
+watch(
+    () => {
+        const access = protectedFileAccess.value;
+        if (access?.mode === 'message') {
+            return `${access.sessionId}\0${access.messageId}`;
+        }
+        if (access?.mode === 'knowledgeBase') {
+            return `kb\0${access.kbId}`;
+        }
+        return '';
+    },
+    (scopeKey, previousScopeKey) => {
+        if (!scopeKey || scopeKey === previousScopeKey) return;
+        clearProtectedFileFailureCache();
+        nextTick(async () => {
+            await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
+        });
+    },
 );
 
 // 单次渲染整个 Markdown 内容（替代 token-by-token，修复 KaTeX 公式在 streaming 时闪烁消失的问题）
@@ -408,7 +450,7 @@ watch(renderedHTML, () => {
 // 渲染 Mermaid 图表的函数
 onUpdated(() => {
     nextTick(async () => {
-        await hydrateProtectedFileImages(parentMd.value);
+        await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
         refreshMarkdownEnhancements(parentMd.value);
         if (props.session?.is_completed) {
@@ -424,7 +466,7 @@ onMounted(async () => {
             parentMd.value.addEventListener('click', handleMarkdownImageClick, true);
         }
         rebindCitations();
-        await hydrateProtectedFileImages(parentMd.value);
+        await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
         await enhanceMarkdownContainer(parentMd.value);
     });

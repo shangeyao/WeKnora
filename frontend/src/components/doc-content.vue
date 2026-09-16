@@ -11,7 +11,7 @@ import { onMounted, ref, nextTick, onUnmounted, watch, computed } from "vue";
 import {
   downKnowledgeDetails, deleteGeneratedQuestion, getChunkByIdOnly, previewKnowledgeFile,
   updateDocumentChunk, listChunkRevisions, revertDocumentChunk, updateKnowledgeMetadata,
-  updateKnowledgeSummary, regenerateKnowledgeSummary, upsertGeneratedQuestion, regenerateGeneratedQuestions, getKnowledgeDetails,
+  updateKnowledgeSummary, updateKnowledgeTitle, regenerateKnowledgeSummary, upsertGeneratedQuestion, regenerateGeneratedQuestions, getKnowledgeDetails,
   KNOWLEDGE_CHUNK_PAGE_SIZE,
 } from "@/api/knowledge-base/index";
 import { MessagePlugin } from "tdesign-vue-next";
@@ -23,7 +23,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import DocumentPreview from '@/components/document-preview.vue';
 import KnowledgeProcessingTimeline from '@/components/knowledge-processing-timeline.vue';
-import { resolveKnowledgeDownloadFileName } from '@/views/knowledge/knowledgeDownloadFileName';
+import { resolveKnowledgeDisplayName, resolveKnowledgeDownloadFileName } from '@/views/knowledge/knowledgeDownloadFileName';
 import { isKnownPreviewableExt, resolveFilePreviewExt } from '@/utils/filePreview';
 
 const { t } = useI18n();
@@ -56,6 +56,40 @@ const summaryRefreshing = ref(false);
 const summaryEditing = ref(false);
 const summaryDraft = ref('');
 const summarySaving = ref(false);
+const titleEditing = ref(false);
+const titleDraft = ref('');
+const titleSaving = ref(false);
+
+const startTitleEdit = () => {
+  titleDraft.value = getDisplayTitle();
+  titleEditing.value = true;
+};
+
+const cancelTitleEdit = () => {
+  titleEditing.value = false;
+  titleDraft.value = '';
+};
+
+const saveTitle = async () => {
+  const title = titleDraft.value.trim();
+  if (!title) {
+    MessagePlugin.warning(t('knowledgeBase.documentNameRequired'));
+    return;
+  }
+  titleSaving.value = true;
+  try {
+    const result: any = await updateKnowledgeTitle(props.details.id, title);
+    const savedTitle = result?.data?.title || title;
+    props.details.title = savedTitle;
+    titleEditing.value = false;
+    emitDocumentStateChange({ title: savedTitle });
+    MessagePlugin.success(t('common.saveSuccess'));
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.saveFailed'));
+  } finally {
+    titleSaving.value = false;
+  }
+};
 
 const startSummaryEdit = () => {
   summaryDraft.value = props.details?.description || '';
@@ -254,6 +288,20 @@ const props = defineProps({
 });
 const emit = defineEmits(["closeDoc", "getDoc", "questionDeleted", "summaryStateChange"]);
 
+const emitDocumentStateChange = (patch: {
+  summary_status?: string;
+  description?: string;
+  title?: string;
+} = {}) => {
+  if (!props.details?.id) return;
+  emit('summaryStateChange', {
+    id: props.details.id,
+    summary_status: patch.summary_status ?? props.details.summary_status,
+    description: patch.description ?? props.details.description,
+    title: patch.title ?? props.details.title,
+  });
+};
+
 const applySummaryState = (summaryStatus?: string, description?: string) => {
   if (typeof summaryStatus === 'string' && summaryStatus) {
     props.details.summary_status = summaryStatus;
@@ -261,13 +309,7 @@ const applySummaryState = (summaryStatus?: string, description?: string) => {
   if (typeof description === 'string') {
     props.details.description = description;
   }
-  if (props.details?.id) {
-    emit('summaryStateChange', {
-      id: props.details.id,
-      summary_status: props.details.summary_status,
-      description: props.details.description,
-    });
-  }
+  emitDocumentStateChange();
 };
 
 const isSummaryStatusInFlight = (status?: string) => status === 'pending' || status === 'processing';
@@ -959,16 +1001,27 @@ const handleClose = () => {
 };
 
 // 获取显示标题
-const getDisplayTitle = () => {
-  if (!props.details.title) return '';
-  if (props.details.type === 'file') {
-    // 文件类型去掉扩展名
-    const lastDotIndex = props.details.title.lastIndexOf(".");
-    return lastDotIndex > 0 ? props.details.title.substring(0, lastDotIndex) : props.details.title;
+const getDisplayTitle = () => resolveKnowledgeDisplayName({
+  title: props.details?.title,
+  file_name: props.details?.file_name,
+  source: props.details?.source,
+  type: props.details?.type,
+  file_type: props.details?.file_type,
+});
+
+const originalFileLabel = computed(() => {
+  const raw = props.details?.file_name || '';
+  if (!raw || props.details?.type !== 'file') return '';
+  if (getDisplayTitle() === resolveKnowledgeDisplayName({
+    title: raw,
+    file_name: raw,
+    type: 'file',
+    file_type: props.details?.file_type,
+  })) {
+    return '';
   }
-  // URL和手动创建直接返回标题
-  return props.details.title;
-};
+  return raw;
+});
 
 const channelLabelMap: Record<string, string> = {
   web: 'knowledgeBase.channelWeb',
@@ -1647,8 +1700,42 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
 
       <div ref="docMarkdownRoot" class="doc-markdown-root doc-drawer-body setting-drawer__body">
         <section v-if="details.id" class="setting-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('knowledgeBase.detailSectionMeta') }}</h4>
+          <div class="section-title-actions">
+            <h4 class="setting-drawer__section-title">{{ $t('knowledgeBase.detailSectionMeta') }}</h4>
+            <div v-if="canEditContent && !titleEditing" class="summary-title-actions">
+              <t-tooltip :content="$t('knowledgeBase.editDocumentName')" placement="top">
+                <t-button class="icon-action-btn" size="small" variant="text" shape="square"
+                  @click="startTitleEdit">
+                  <template #icon><t-icon name="edit" size="15px" /></template>
+                </t-button>
+              </t-tooltip>
+            </div>
+          </div>
+          <div v-if="titleEditing" class="title_editor">
+            <t-input
+              v-model="titleDraft"
+              :placeholder="$t('knowledgeBase.documentNamePlaceholder')"
+              maxlength="255"
+              show-limit-number
+            />
+            <div class="title_editor_actions">
+              <t-button size="small" variant="outline" :disabled="titleSaving" @click="cancelTitleEdit">
+                {{ $t('common.cancel') }}
+              </t-button>
+              <t-button size="small" theme="primary" :loading="titleSaving" @click="saveTitle">
+                {{ $t('common.save') }}
+              </t-button>
+            </div>
+          </div>
           <div class="doc-detail-rows">
+            <div v-if="getDisplayTitle()" class="doc-detail-row">
+              <span class="doc-detail-label">{{ $t('knowledgeBase.documentName') }}</span>
+              <span class="doc-detail-value">{{ getDisplayTitle() }}</span>
+            </div>
+            <div v-if="originalFileLabel" class="doc-detail-row">
+              <span class="doc-detail-label">{{ $t('knowledgeBase.originalFileName') }}</span>
+              <span class="doc-detail-value">{{ originalFileLabel }}</span>
+            </div>
             <div v-if="details.time" class="doc-detail-row">
               <span class="doc-detail-label">{{ getTimeLabel() }}</span>
               <span class="doc-detail-value">{{ details.time }}</span>
@@ -2622,6 +2709,19 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
 
 .summary_editor_actions {
   justify-content: flex-end;
+}
+
+.title_editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.title_editor_actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .summary_content {

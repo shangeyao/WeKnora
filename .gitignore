@@ -60,3 +60,27 @@ miniprogram/project.private.config.json
 
 # Staging dir for the Docker sandbox self-check probe (removed after each run)
 .weknora-sandbox-check-*
+
+# 本地 ACR 部署脚本与镜像定义（不提交到 Git）
+docker-compose.calb-ai.yml
+scripts/acr_*
+scripts/push_acr_*
+scripts/generate_calb_ai_compose.py
+docker/Dockerfile.app.overlay
+docker/Dockerfile.hub-docreader
+docker/Dockerfile.hub-sandbox
+docker/Dockerfile.busybox
+docker/Dockerfile.clickhouse
+docker/Dockerfile.dex
+docker/Dockerfile.langfuse
+docker/Dockerfile.langfuse-worker
+docker/Dockerfile.minio
+docker/Dockerfile.neo4j
+docker/Dockerfile.paradedb
+docker/Dockerfile.qdrant
+docker/Dockerfile.redis
+docker/Dockerfile.searxng
+docker/Dockerfile.ui
+Dockerfile.app
+Dockerfile.ui
+Dockerfile.mcp

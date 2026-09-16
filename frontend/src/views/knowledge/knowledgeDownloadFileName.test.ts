@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveKnowledgeDownloadFileName } from './knowledgeDownloadFileName.ts';
+import { resolveKnowledgeDisplayName, resolveKnowledgeDownloadFileName } from './knowledgeDownloadFileName.ts';
 
 test('prefers the original filename over the extensionless display name', () => {
   assert.equal(resolveKnowledgeDownloadFileName({
@@ -18,6 +18,21 @@ test('falls back to the backend filename when no original filename is present', 
     file_name: 'notes.txt',
     type: 'file',
   }), 'notes.txt');
+});
+
+test('prefers title over file_name for display and strips matching file extensions', () => {
+  assert.equal(resolveKnowledgeDisplayName({
+    title: '自定义名称',
+    file_name: 'manual.pdf',
+    type: 'file',
+    file_type: 'pdf',
+  }), '自定义名称');
+  assert.equal(resolveKnowledgeDisplayName({
+    title: 'manual.pdf',
+    file_name: 'manual.pdf',
+    type: 'file',
+    file_type: 'pdf',
+  }), 'manual');
 });
 
 test('adds the markdown extension to manual documents exactly once', () => {

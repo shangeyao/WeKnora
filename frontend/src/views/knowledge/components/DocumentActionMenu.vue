@@ -53,10 +53,20 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
     <span>{{ $t('common.download') }}</span>
   </div>
 
-  <!-- 编辑文档 -->
+  <!-- 编辑手工文档 -->
   <div v-if="item.type === 'manual'" class="doc-action-menu-item" @click.stop="emit('edit')">
     <t-icon class="icon" name="edit" />
     <span>{{ $t('knowledgeBase.editDocument') }}</span>
+  </div>
+
+  <!-- 编辑文档属性（名称、摘要、自定义属性） -->
+  <div
+    v-if="canMutateKnowledge && (item.type === 'file' || item.type === 'url')"
+    class="doc-action-menu-item"
+    @click.stop="emit('edit')"
+  >
+    <t-icon class="icon" name="edit" />
+    <span>{{ $t('knowledgeBase.editProperties') }}</span>
   </div>
 
   <!-- 查看处理过程 -->

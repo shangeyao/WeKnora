@@ -426,6 +426,10 @@ export function updateKnowledgeSummary(knowledgeId: string, description: string)
   return put(`/api/v1/knowledge/${knowledgeId}`, { description });
 }
 
+export function updateKnowledgeTitle(knowledgeId: string, title: string) {
+  return put(`/api/v1/knowledge/${knowledgeId}`, { title });
+}
+
 export function regenerateKnowledgeSummary(knowledgeId: string) {
   return post(`/api/v1/knowledge/${knowledgeId}/regenerate-summary`, {});
 }
