@@ -10,6 +10,7 @@ import {
 import { knowledgeStore } from "@/stores/knowledge";
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { resolveKnowledgeDisplayName } from '@/views/knowledge/knowledgeDownloadFileName';
 
 export default function (knowledgeBaseId?: string) {
   const usemenuStore = knowledgeStore();
@@ -56,9 +57,10 @@ export default function (knowledgeBaseId?: string) {
 
         const { data, total: totalResult } = result;
     const cardList_ = data.map((item: any) => {
-      const rawName = item.file_name || item.title || item.source || t('knowledgeBase.untitledDocument')
-      const dotIndex = rawName.lastIndexOf('.')
-      const displayName = dotIndex > 0 ? rawName.substring(0, dotIndex) : rawName
+      const displayName = resolveKnowledgeDisplayName(
+        item,
+        t('knowledgeBase.untitledDocument'),
+      )
       const fileTypeSource = item.file_type || (item.type === 'manual' ? 'MANUAL' : '')
       return {
         ...item,
