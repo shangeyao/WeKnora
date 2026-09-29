@@ -314,7 +314,9 @@ const messageIdForArtifacts = computed(() => {
 // proxy authorizes cross-tenant shared-KB resources; plain /files only works
 // when the caller's active tenant owns the blob.
 const protectedFileAccess = computed(() => {
-    const messageId = String(props.session?.assistant_message_id || props.session?.id || '').trim();
+    const messageId =
+        persistedAssistantId(props.session)
+        || String(props.session?.assistant_message_id || props.session?.id || '').trim();
     if (props.sessionId && messageId) {
         return { mode: 'message', sessionId: props.sessionId, messageId };
     }
@@ -348,14 +350,6 @@ const artifactRefContext = computed(() => {
     const messageId = messageIdForArtifacts.value;
     if (!props.sessionId || !messageId) return null;
     return { sessionId: props.sessionId, messageId };
-});
-
-// Shared replies must authorize files through the persisted message, just as
-// AgentStreamDisplay does. The default embed plane still takes precedence.
-const protectedFileAccess = computed(() => {
-    const messageId = persistedAssistantId(props.session);
-    if (!props.sessionId || !messageId) return undefined;
-    return { mode: 'message', sessionId: props.sessionId, messageId };
 });
 
 const artifactRefLabels = computed(() => ({

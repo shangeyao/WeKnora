@@ -1,6 +1,7 @@
-# Overlay local LDAP build onto upstream runtime (build context = repo root /).
+# Overlay local build onto a runtime base (Hub or ACR tag).
 ARG WEKNORA_VERSION=v0.6.3
-FROM wechatopenai/weknora-app:${WEKNORA_VERSION}
+ARG RUNTIME_IMAGE=wechatopenai/weknora-app:${WEKNORA_VERSION}
+FROM ${RUNTIME_IMAGE}
 
 COPY --from=weknora-app-builder:local /app/WeKnora /app/WeKnora
 COPY --from=weknora-app-builder:local /app/migrations /app/migrations

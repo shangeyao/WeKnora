@@ -1,16 +1,5 @@
-# Build extension and daemon from the same pinned source on the runtime architecture.
-FROM --platform=$TARGETPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
-WORKDIR /build
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends git python3 ca-certificates curl build-essential cmake pkg-config && \
-    rm -rf /var/lib/apt/lists/*
-ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
-ENV PATH=/usr/local/cargo/bin:$PATH
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
-ARG TARGETOS
-ARG TARGETARCH
-RUN bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
+# ACR/custom push: compile WeKnora from repo source (skip in-image BrowserSkill build; Hub images do not ship it).
+# Browser connection can be enabled later by baking artifacts or using a full Dockerfile.app build.
 
 # Build stage
 FROM golang:1.26-bookworm AS builder
@@ -45,8 +34,10 @@ COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod
 RUN --mount=type=cache,target=/go/pkg/mod \
     export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}" GOSUMDB="${GOSUMDB:-off}" && \
     go mod download
+# Overlay builds reuse DuckDB extensions baked into the upstream runtime image.
+ARG SKIP_DUCKDB_DOWNLOAD=1
 COPY cmd/download cmd/download
-RUN go run cmd/download/duckdb/duckdb.go
+RUN if [ "${SKIP_DUCKDB_DOWNLOAD}" != "1" ]; then go run cmd/download/duckdb/duckdb.go; fi
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod bash ./scripts/copy-licenses.sh /license-bundle
 
@@ -93,10 +84,9 @@ WORKDIR /app
 
 ARG APK_MIRROR_ARG
 
-# Pairing derives the gateway URL from the user's page origin by default.
-ENV BROWSERSKILL_BINARY=/opt/weknora/browserskill/bsk \
-    BROWSERSKILL_EXTENSION_PATH=/opt/weknora/browserskill/browser-skill-weknora-0.3.1.zip
-COPY --from=browserskill /opt/weknora/browserskill /opt/weknora/browserskill
+ENV BROWSERSKILL_BINARY= \
+    BROWSERSKILL_EXTENSION_PATH=
+RUN mkdir -p /opt/weknora/browserskill
 
 # Create a non-root user first
 RUN useradd -m -s /bin/bash appuser
@@ -140,7 +130,6 @@ COPY --from=builder /app/config ./config
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/dataset/samples ./dataset/samples
-COPY --from=builder /root/.duckdb /home/appuser/.duckdb
 COPY --from=builder /app/WeKnora .
 COPY --from=builder /license-bundle/ ./
 

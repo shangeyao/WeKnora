@@ -46,7 +46,12 @@ COPY . .
 # After npm ci so a new commit hash does not bust the dependency layer.
 ARG VITE_FRONTEND_COMMIT=unknown
 ENV VITE_FRONTEND_COMMIT=${VITE_FRONTEND_COMMIT}
-RUN npm run build
+ARG VITE_BASE_PATH=
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
+ARG FRONTEND_BASE_PATH=
+RUN npm run build && \
+    base="${FRONTEND_BASE_PATH:-}"; base="${base%/}"; \
+    printf '%s' "$base" > dist/.frontend-base-path
 
 # ---------------------------------------------------------------------------
 # Stage 2: nginx runtime
@@ -70,6 +75,8 @@ COPY nginx-http.conf /etc/nginx/conf.d/00-weknora-http.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+ARG FRONTEND_BASE_PATH=
+ENV FRONTEND_BASE_PATH=${FRONTEND_BASE_PATH}
 ENV MAX_FILE_SIZE_MB=50
 
 EXPOSE 80
