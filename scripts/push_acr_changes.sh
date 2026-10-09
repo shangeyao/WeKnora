@@ -74,7 +74,8 @@ build_ui_image() {
   cid="$(docker create --platform "${DOCKER_PLATFORM}" "${ui_base}")"
   docker cp frontend/dist/. "${cid}:/usr/share/nginx/html/"
   docker cp frontend/nginx.conf "${cid}:/etc/nginx/templates/default.conf.template"
-  docker cp frontend/docker-entrypoint.sh "${cid}:/docker-entrypoint.sh"
+  # Host checkout is often 644; without +x the image fails: exec permission denied.
+  docker cp --chmod=755 frontend/docker-entrypoint.sh "${cid}:/docker-entrypoint.sh"
   docker cp frontend/nginx-api-proxy.conf "${cid}:/etc/nginx/api-proxy.conf"
   docker cp frontend/nginx-http.conf "${cid}:/etc/nginx/conf.d/00-weknora-http.conf"
   docker commit \
