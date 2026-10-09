@@ -14,13 +14,13 @@
 #
 # 镜像前缀可通过 .env 覆盖：
 #   ACR_IMAGE_PREFIX=crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora
-#   WEKNORA_VERSION=v0.8.0
+#   WEKNORA_VERSION=v0.8.2
 #
 # 所有服务默认 platform: linux/amd64（与 x86 服务器部署一致）
 name: weknora-calb-ai
 services:
   frontend:
-    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:ui-${WEKNORA_VERSION:-v0.8.0}
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:ui-${WEKNORA_VERSION:-v0.8.2}
     container_name: WeKnora-frontend
     ports:
     - ${FRONTEND_PORT:-80}:80
@@ -32,6 +32,8 @@ services:
     - APP_PORT=${APP_BACKEND_PORT:-8080}
     - APP_SCHEME=${APP_SCHEME:-http}
     - FRONTEND_BASE_PATH=${FRONTEND_BASE_PATH:-}
+    # ACR UI from push_acr_changes may ship /docker-entrypoint.sh without +x; sh does not require it.
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
     depends_on:
       app:
         condition: service_healthy
@@ -40,7 +42,7 @@ services:
     restart: unless-stopped
     platform: linux/amd64
   app:
-    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:app-${WEKNORA_VERSION:-v0.8.0}
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:app-${WEKNORA_VERSION:-v0.8.2}
     container_name: WeKnora-app
     ports:
     - ${APP_PORT:-8080}:8080
@@ -222,15 +224,18 @@ services:
     - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
     - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
     - SYSTEM_AES_KEY=${SYSTEM_AES_KEY:-}
+    - SYSTEM_SIGNING_KEY=${SYSTEM_SIGNING_KEY:-}
     - SSRF_WHITELIST=${SSRF_WHITELIST:-}
     - IMAGE_HOST_KEEP_URL=${IMAGE_HOST_KEEP_URL:-}
     - SSRF_WHITELIST_EXTRA=${SSRF_WHITELIST_EXTRA:-searxng,qdrant,milvus,weaviate,doris-fe,doris-be,minio}
+    - SSRF_DNS_WHITELIST_ONLY=${SSRF_DNS_WHITELIST_ONLY:-}
     - CONCURRENCY_POOL_SIZE=${CONCURRENCY_POOL_SIZE:-5}
     - JWT_SECRET=${JWT_SECRET:-}
     - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
     - MAX_SKILL_BUNDLE_SIZE_MB=${MAX_SKILL_BUNDLE_SIZE_MB:-256}
     - WEKNORA_DOCUMENT_PROCESS_TIMEOUT=${WEKNORA_DOCUMENT_PROCESS_TIMEOUT:-}
     - WEKNORA_DOCREADER_CALL_TIMEOUT=${WEKNORA_DOCREADER_CALL_TIMEOUT:-}
+    - WEKNORA_PADDLEOCR_VL_TIMEOUT=${WEKNORA_PADDLEOCR_VL_TIMEOUT:-}
     - WEKNORA_HOUSEKEEPING_ENABLED=${WEKNORA_HOUSEKEEPING_ENABLED:-}
     - WEKNORA_SKILLS_DIR=${WEKNORA_SKILLS_DIR:-}
     - WEKNORA_CHAT_ATTACHMENT_TTL_HOURS=${WEKNORA_CHAT_ATTACHMENT_TTL_HOURS:-24}
@@ -266,7 +271,7 @@ services:
     - OIDC_USER_INFO_MAPPING_USER_NAME=${OIDC_USER_INFO_MAPPING_USER_NAME:-}
     - OIDC_USER_INFO_MAPPING_EMAIL=${OIDC_USER_INFO_MAPPING_EMAIL:-}
     - FEISHU_DOCX_PARSE_MODE=${FEISHU_DOCX_PARSE_MODE:-export}
-    - WEKNORA_SANDBOX_DOCKER_IMAGE=${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:sandbox-${WEKNORA_VERSION:-v0.8.0}
+    - WEKNORA_SANDBOX_DOCKER_IMAGE=${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:sandbox-${WEKNORA_VERSION:-v0.8.2}
     - DONGJIAN_SSO_ENABLE=${DONGJIAN_SSO_ENABLE:-false}
     - DONGJIAN_SSO_CLIENT_ID=${DONGJIAN_SSO_CLIENT_ID:-dongjian}
     - DONGJIAN_SSO_RSA_PRIVATE_KEY_FILE=${DONGJIAN_SSO_RSA_PRIVATE_KEY_FILE:-/data/secrets/dongjian_rsa_private.pem}
@@ -285,7 +290,7 @@ services:
     - host.docker.internal:host-gateway
     platform: linux/amd64
   docreader:
-    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:docreader-${WEKNORA_VERSION:-v0.8.0}
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:docreader-${WEKNORA_VERSION:-v0.8.2}
     container_name: WeKnora-docreader
     expose:
     - '50051'
@@ -298,6 +303,7 @@ services:
     - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-}
     - SSRF_WHITELIST=${SSRF_WHITELIST:-}
     - SSRF_WHITELIST_EXTRA=${SSRF_WHITELIST_EXTRA:-}
+    - SSRF_DNS_WHITELIST_ONLY=${SSRF_DNS_WHITELIST_ONLY:-}
     - GRPC_TLS_ENABLED=${GRPC_TLS_ENABLED:-false}
     - GRPC_TLS_CERT=${GRPC_TLS_CERT:-}
     - GRPC_TLS_KEY=${GRPC_TLS_KEY:-}
@@ -360,7 +366,7 @@ services:
     - host.docker.internal:host-gateway
     platform: linux/amd64
   postgres:
-    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.6-pg17
     container_name: WeKnora-postgres
     environment:
     - POSTGRES_USER=${DB_USER}
@@ -498,7 +504,7 @@ services:
     - /etc/dex/config.yaml
     platform: linux/amd64
   langfuse-db-init:
-    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.2-pg17
+    image: ${ACR_IMAGE_PREFIX:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com/calb_ai/weknora}:paradedb-v0.22.6-pg17
     container_name: WeKnora-langfuse-db-init
     depends_on:
       postgres:

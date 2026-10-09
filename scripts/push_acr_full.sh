@@ -54,7 +54,7 @@ APP_IMAGE_MAP=(
   "wechatopenai/weknora-sandbox:${WEKNORA_VERSION}|sandbox-${WEKNORA_VERSION}|"
 )
 INFRA_IMAGE_MAP=(
-  "paradedb/paradedb:v0.22.2-pg17|paradedb-v0.22.2-pg17|"
+  "paradedb/paradedb:v0.22.6-pg17|paradedb-v0.22.6-pg17|"
   "redis:7.0-alpine|redis-7.0-alpine|"
   "busybox:1.36|busybox-1.36|"
   "searxng/searxng:latest|searxng-latest|"
@@ -137,6 +137,20 @@ pull_hub_images() {
   docker pull --platform "${DOCKER_PLATFORM}" "wechatopenai/weknora-sandbox:${WEKNORA_VERSION}"
 }
 
+pull_third_party_image() {
+  local src="$1"
+  if docker pull --platform "${DOCKER_PLATFORM}" "$src"; then
+    return 0
+  fi
+  local mirror="${DOCKER_MIRROR_PREFIX:-docker.1ms.run}"
+  echo "[acr] retry via mirror: ${mirror}/${src}" >&2
+  if docker pull --platform "${DOCKER_PLATFORM}" "${mirror}/${src}"; then
+    docker tag "${mirror}/${src}" "$src"
+    return 0
+  fi
+  return 1
+}
+
 build_local_images() {
   if [[ "${SKIP_BUILD:-}" == "1" ]]; then
     echo "[acr] SKIP_BUILD=1, skipping local builds"
@@ -184,7 +198,7 @@ push_all_images() {
       fi
       if [[ "$need_pull" == "1" ]]; then
         echo "  pull (${DOCKER_PLATFORM}): $src"
-        if ! docker pull --platform "${DOCKER_PLATFORM}" "$src"; then
+        if ! pull_third_party_image "$src"; then
           echo "ERROR: pull failed for $src" >&2
           failed=$((failed + 1))
           continue

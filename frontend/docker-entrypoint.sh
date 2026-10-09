@@ -44,8 +44,28 @@ envsubst '${MAX_FILE_SIZE} ${MAX_SKILL_BUNDLE_SIZE} ${APP_HOST} ${APP_PORT} ${AP
   < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 if [ -n "$FRONTEND_BASE_PATH" ]; then
   sed -i "s|# __FRONTEND_REDIRECT__|location = ${FRONTEND_BASE_PATH} { return 301 ${FRONTEND_BASE_PATH}/; }|" /etc/nginx/conf.d/default.conf
+  # Legacy fetch('/files') and fetch('/api/v1/…') without vite base; must live inside server { }.
+  ROOT_PATH_PROXY_SNIPPET=/tmp/weknora-root-path-proxies.conf
+  cat > "${ROOT_PATH_PROXY_SNIPPET}" <<EOF
+    location = /files {
+        proxy_pass ${APP_SCHEME}://${APP_HOST}:${APP_PORT}/files;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location ^~ /api/ {
+        proxy_pass ${APP_SCHEME}://${APP_HOST}:${APP_PORT}/api/;
+        include /etc/nginx/api-proxy.conf;
+    }
+EOF
+  sed -i -e "/# __ROOT_PATH_FILE_API_PROXY__/r ${ROOT_PATH_PROXY_SNIPPET}" \
+    -e "/# __ROOT_PATH_FILE_API_PROXY__/d" /etc/nginx/conf.d/default.conf
+  rm -f "${ROOT_PATH_PROXY_SNIPPET}"
 else
   sed -i '/# __FRONTEND_REDIRECT__/d' /etc/nginx/conf.d/default.conf
+  sed -i '/# __ROOT_PATH_FILE_API_PROXY__/d' /etc/nginx/conf.d/default.conf
 fi
 
 # 启动 nginx
