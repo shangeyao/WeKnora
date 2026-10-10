@@ -214,6 +214,30 @@ func TestOneLiveCopyKeepsTheFileServable(t *testing.T) {
 
 // A reference the message never produced as an artifact keeps its old path:
 // knowledge-base images and user attachments are authorized by the text.
+func TestMessageSharedKBAuthorizeFromContentKBTags(t *testing.T) {
+	const ref = "resource://Flz2Ihgz-5bWEbZo6po5Jg"
+	const kbID = "72a225d6-4749-43c1-997d-b12667051783"
+	message := &types.Message{
+		ID: "message", Role: "assistant",
+		Content: "cite <kb doc=\"SOP.pdf\" chunk_id=\"2652572d-9992-43b4-955c-e7c14cc32386\" kb_id=\"" + kbID + "\" /> " +
+			"![tools](" + ref + ")",
+	}
+	catalog := fileCatalog{&types.StoredResource{
+		Handle: "Flz2Ihgz-5bWEbZo6po5Jg", TenantID: 2, PhysicalPath: "local://2/exports/tools.png",
+	}}
+	binding := &fileBinding{allowed: true}
+	shares := &shareLookup{permission: types.OrgRoleViewer}
+	authorizer := MessageKBShareAuthorizer{
+		ShareGuard: shares,
+		KBs:        messageFileKBs{kb: &types.KnowledgeBase{ID: kbID, TenantID: 2}},
+		Bindings:   binding,
+	}
+	ctx := types.WithExecutionTenant(callerContext(), 10000)
+	_, err := AuthorizeMessageFile(ctx, message, ref, nil, catalog, authorizer)
+	require.NoError(t, err, "kb_id in answer content should authorize shared-KB images")
+	require.Equal(t, kbID, binding.kb)
+}
+
 func TestNonArtifactReferencesStillAuthorizeFromContent(t *testing.T) {
 	const kbImage = "resource://ZzZzZzZzZzZzZzZzZzZzZz"
 	deletedAt := time.Now()

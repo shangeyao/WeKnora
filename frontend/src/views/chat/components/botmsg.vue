@@ -166,6 +166,7 @@ import {
     clearProtectedFileFailureCache,
 } from '@/utils/security';
 import { useProtectedImageRecovery } from '@/composables/useProtectedImageRecovery';
+import { chatProtectedFileFallbacks } from '@/utils/protectedFileAccess';
 import {
     artifactIndexFromEventTarget,
     hydrateArtifactImages,
@@ -331,6 +332,9 @@ const protectedFileAccess = computed(() => {
     }
     return undefined;
 });
+const protectedFileHydrationOptions = computed(() => ({
+    fallbacks: chatProtectedFileFallbacks(props.session?.knowledge_references?.[0]?.knowledge_base_id),
+}));
 // Set when the drawer is opened by clicking an inline artifact card, so it
 // lands directly on that file's preview instead of the list.
 const artifactPreviewIndex = ref(null);
@@ -419,8 +423,12 @@ const { displayed: typedAnswer } = useTypewriter(
 const answerFullyRendered = computed(() =>
     Boolean(props.session?.is_completed) && typedAnswer.value.length >= answerText.value.length
 );
-useProtectedImageRecovery(() => parentMd.value, () => protectedFileAccess.value,
-    () => !props.session?.isAgentMode && !props.session?.persistence_error && answerFullyRendered.value);
+useProtectedImageRecovery(
+    () => parentMd.value,
+    () => protectedFileAccess.value,
+    () => !props.session?.isAgentMode && !props.session?.persistence_error && answerFullyRendered.value,
+    () => protectedFileHydrationOptions.value,
+);
 
 watch(
     answerFullyRendered,
@@ -445,7 +453,11 @@ watch(
         if (!scopeKey || scopeKey === previousScopeKey) return;
         clearProtectedFileFailureCache();
         nextTick(async () => {
-            await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
+            await hydrateProtectedFileImages(
+                parentMd.value,
+                protectedFileAccess.value,
+                protectedFileHydrationOptions.value,
+            );
         });
     },
 );
@@ -536,7 +548,11 @@ watch(renderedHTML, () => {
 // 渲染 Mermaid 图表的函数
 onUpdated(() => {
     nextTick(async () => {
-        await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
+        await hydrateProtectedFileImages(
+            parentMd.value,
+            protectedFileAccess.value,
+            protectedFileHydrationOptions.value,
+        );
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
         refreshMarkdownEnhancements(parentMd.value);
         if (props.session?.is_completed) {
@@ -552,7 +568,11 @@ onMounted(async () => {
             parentMd.value.addEventListener('click', handleMarkdownImageClick, true);
         }
         rebindCitations();
-        await hydrateProtectedFileImages(parentMd.value, protectedFileAccess.value);
+        await hydrateProtectedFileImages(
+            parentMd.value,
+            protectedFileAccess.value,
+            protectedFileHydrationOptions.value,
+        );
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
         await enhanceMarkdownContainer(parentMd.value);
     });
