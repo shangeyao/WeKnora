@@ -52,7 +52,7 @@ build_app_image() {
     --build-arg GO_VERSION_ARG="${GO_VERSION}" \
     --build-arg GOPROXY_ARG="${GOPROXY_ARG:-https://goproxy.cn,direct}" \
     --build-arg GOSUMDB_ARG="${GOSUMDB_ARG:-off}" \
-    --build-arg APK_MIRROR_ARG="${APK_MIRROR_ARG:-mirrors.aliyun.com}" \
+    --build-arg APK_MIRROR_ARG="${APK_MIRROR_ARG-mirrors.aliyun.com}" \
     --build-arg WITH_ANYDOC="${WITH_ANYDOC}" \
     -t weknora-app-builder:local .
 
