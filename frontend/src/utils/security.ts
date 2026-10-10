@@ -17,6 +17,7 @@ import {
   isProviderFileURL,
   PROVIDER_SCHEME_PATTERN,
   resolveProtectedFileAccess,
+  type HydrateProtectedFileOptions,
   type ProtectedFileAccessContext,
 } from './protectedFileAccess.ts';
 
@@ -598,9 +599,42 @@ function ensureProtectedResourceCardClicks(): void {
  * 上下文（如嵌入应用的 Embed 平面）优先，组件只在同一鉴权平面内用
  * `access` 细化作用域（如知识库）。
  */
+function protectedFileRequestKey(url: string, headers: Record<string, string>): string {
+  return JSON.stringify([url, headers]);
+}
+
+function buildProtectedFileAccessChain(
+  primary: ProtectedFileAccessContext,
+  options?: HydrateProtectedFileOptions,
+): ProtectedFileAccessContext[] {
+  const chain: ProtectedFileAccessContext[] = [primary];
+  for (const ctx of options?.fallbacks ?? []) {
+    const duplicate = chain.some((existing) => {
+      if (existing.mode !== ctx.mode) return false;
+      if (ctx.mode === 'knowledgeBase') {
+        return existing.mode === 'knowledgeBase' && existing.kbId === ctx.kbId;
+      }
+      if (ctx.mode === 'message') {
+        return (
+          existing.mode === 'message'
+          && existing.sessionId === ctx.sessionId
+          && existing.messageId === ctx.messageId
+        );
+      }
+      if (ctx.mode === 'embed') {
+        return existing.mode === 'embed' && existing.channelId === ctx.channelId;
+      }
+      return existing.mode === 'tenant';
+    });
+    if (!duplicate) chain.push(ctx);
+  }
+  return chain;
+}
+
 export async function hydrateProtectedFileImages(
   root: ParentNode | null | undefined,
   access?: ProtectedFileAccessContext,
+  options?: HydrateProtectedFileOptions,
 ): Promise<void> {
   if (!root || typeof window === 'undefined') {
     return;
@@ -628,13 +662,15 @@ export async function hydrateProtectedFileImages(
     // A null request means this source cannot be fetched under the current
     // access context (not a storage path, or the embed token has not arrived
     // yet). Leave the placeholder so a later pass can retry.
-    const request = buildProtectedFileRequest(sourceURL, resolvedAccess);
-    if (!request) {
+    const accessChain = buildProtectedFileAccessChain(resolvedAccess, options);
+    const requests = accessChain
+      .map((ctx) => buildProtectedFileRequest(sourceURL, ctx))
+      .filter((req): req is NonNullable<typeof req> => req != null);
+    if (!requests.length) {
       img.dataset.authHydrated = '0';
       return;
     }
-    const { url: requestURL, headers } = request;
-    const requestKey = JSON.stringify([requestURL, headers]);
+    const requestKey = JSON.stringify(requests.map((req) => protectedFileRequestKey(req.url, req.headers)));
     if (img.dataset.authHydrated === '1' && src.startsWith('blob:') && protectedImageRequests.get(img) === requestKey) {
       return;
     }
@@ -666,26 +702,51 @@ export async function hydrateProtectedFileImages(
       loadTask = (async (): Promise<ProtectedFileLoadResult> => {
         for (let attempt = 0; ; attempt++) {
           const generation = protectedFileCacheState.retryGeneration;
+          let saw403 = false;
           try {
-            const resp = await fetch(requestURL, {
-              method: 'GET',
-              headers,
-              credentials: 'include',
-            });
-            if (!resp.ok) {
-              if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) continue;
+            for (const { url: requestURL, headers } of requests) {
+              const singleKey = protectedFileRequestKey(requestURL, headers);
+              const resp = await fetch(requestURL, {
+                method: 'GET',
+                headers,
+                credentials: 'include',
+              });
+              if (resp.ok) {
+                const blob = await resp.blob();
+                const blobURL = URL.createObjectURL(blob);
+                const file = {
+                  blobURL,
+                  blob,
+                  fileName: responseFileName(resp.headers.get('Content-Disposition'), sourceURL),
+                };
+                protectedFileBlobCache.set(singleKey, file);
+                protectedFileBlobCache.set(requestKey, file);
+                protectedFileFailureCache.delete(requestKey);
+                protectedFileFailureCache.delete(singleKey);
+                return { status: 'loaded', ...file };
+              }
               if (resp.status === 404) {
                 protectedFileFailureCache.set(requestKey, Date.now());
                 return { status: 'missing' };
               }
+              if (resp.status === 403) {
+                saw403 = true;
+                continue;
+              }
+              if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) {
+                break;
+              }
               throw new Error(`HTTP ${resp.status}`);
             }
-            const blob = await resp.blob();
-            const blobURL = URL.createObjectURL(blob);
-            const file = { blobURL, blob, fileName: responseFileName(resp.headers.get("Content-Disposition"), sourceURL) };
-            protectedFileBlobCache.set(requestKey, file);
-            protectedFileFailureCache.delete(requestKey);
-            return { status: 'loaded', ...file };
+            if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) {
+              continue;
+            }
+            if (saw403) {
+              protectedFileFailureCache.set(requestKey, Date.now());
+              return { status: 'failed' };
+            }
+            protectedFileFailureCache.set(requestKey, Date.now());
+            return { status: 'failed' };
           } catch (error) {
             if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) continue;
             console.warn('[security] hydrateProtectedFileImages failed:', error);

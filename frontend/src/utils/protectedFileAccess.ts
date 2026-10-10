@@ -40,6 +40,23 @@ export interface ProtectedFileRequest {
   headers: Record<string, string>;
 }
 
+/** Options for {@link hydrateProtectedFileImages} in security.ts. */
+export type HydrateProtectedFileOptions = {
+  /** After the primary context returns 403, try these in order (e.g. KB then tenant). */
+  fallbacks?: ProtectedFileAccessContext[];
+};
+
+/** Fallback chain for chat answers that cite a knowledge base. */
+export function chatProtectedFileFallbacks(kbId?: string | null): ProtectedFileAccessContext[] {
+  const fallbacks: ProtectedFileAccessContext[] = [];
+  const kb = (kbId ?? '').trim();
+  if (kb) {
+    fallbacks.push({ mode: 'knowledgeBase', kbId: kb });
+  }
+  fallbacks.push({ mode: 'tenant' });
+  return fallbacks;
+}
+
 /** Prefix vite BASE_URL for root-relative proxy paths used by fetch(), not axios baseURL. */
 function withAppPrefix(path: string): string {
   const trimmed = path.trim();

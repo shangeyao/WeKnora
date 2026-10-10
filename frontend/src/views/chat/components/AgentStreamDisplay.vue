@@ -668,7 +668,7 @@ import {
   hydrateArtifactImages,
   renderArtifactReference,
 } from '@/utils/sandboxArtifactRefs';
-import type { ProtectedFileAccessContext } from '@/utils/protectedFileAccess';
+import { chatProtectedFileFallbacks, type ProtectedFileAccessContext } from '@/utils/protectedFileAccess';
 import { unwrapFinalAnswerWrappers, thinkingEqualsAnswer } from '@/utils/finalAnswer';
 import { getAgentToolIconName } from '@/utils/agent-tool-icons';
 import { getMcpToolDisplayType, getMcpToolTitle, mcpToolResultOutput } from '@/utils/mcpToolDisplay';
@@ -909,7 +909,11 @@ const wikiDrawerContent = computed(() => {
 watch(wikiDrawerContent, async () => {
   await nextTick();
   if (wikiDrawerBodyRef.value) {
-    await hydrateProtectedFileImages(wikiDrawerBodyRef.value, protectedFileAccess.value);
+    await hydrateProtectedFileImages(
+      wikiDrawerBodyRef.value,
+      protectedFileAccess.value,
+      protectedFileHydrationOptions.value,
+    );
   }
 });
 
@@ -1036,9 +1040,6 @@ const {
   forget: forgetMemory,
 } = useChatMemoryRow(() => props.session?.used_memories as UsedMemory[] | undefined);
 
-const resolveAssistantMessageId = (session?: SessionData) =>
-  String(session?.assistant_message_id || session?.id || '').trim();
-
 // Agent answers embed exported charts and knowledge-base images as
 // `resource://` handles. Embed visitors use the channel-scoped proxy. Logged-in
 // users use the persisted assistant message as the authorization anchor, which
@@ -1047,12 +1048,21 @@ const protectedFileAccess = computed<ProtectedFileAccessContext | undefined>(() 
   if (props.embeddedMode && props.embedChannelId && props.embedToken) {
     return { mode: 'embed', channelId: props.embedChannelId, token: props.embedToken };
   }
-  const messageId = resolveAssistantMessageId(props.session);
+  const messageId =
+    persistedAssistantId(props.session as any)
+    || String(props.session?.assistant_message_id || props.session?.id || '').trim();
   if (props.sessionId && messageId) {
     return { mode: 'message', sessionId: props.sessionId, messageId };
   }
+  const kbId = props.session?.knowledge_references?.[0]?.knowledge_base_id;
+  if (typeof kbId === 'string' && kbId.trim()) {
+    return { mode: 'knowledgeBase', kbId: kbId.trim() };
+  }
   return undefined;
 });
+const protectedFileHydrationOptions = computed(() => ({
+  fallbacks: chatProtectedFileFallbacks(props.session?.knowledge_references?.[0]?.knowledge_base_id),
+}));
 
 // -----------------------------------------------------------------------------
 // Skill artifact download drawer (Agent path)
@@ -1542,7 +1552,11 @@ watch(eventStream, (stream) => {
   activeThinkingVersion.value++;
 
   nextTick(async () => {
-    await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await hydrateProtectedFileImages(
+      rootElement.value,
+      protectedFileAccess.value,
+      protectedFileHydrationOptions.value,
+    );
     await enhanceMarkdownContainer(rootElement.value);
     // Auto-scroll thinking detail content to bottom during streaming
     if (newActiveIds.size > 0 && rootElement.value) {
@@ -1692,8 +1706,12 @@ const answerFullyRendered = computed(
     isSegmentDone.value &&
     typedAnswer.value.length >= activeAnswerMarkdown.value.length,
 );
-useProtectedImageRecovery(() => rootElement.value, () => protectedFileAccess.value,
-  () => !props.session?.persistence_error && answerFullyRendered.value);
+useProtectedImageRecovery(
+  () => rootElement.value,
+  () => protectedFileAccess.value,
+  () => !props.session?.persistence_error && answerFullyRendered.value,
+  () => protectedFileHydrationOptions.value,
+);
 watch(answerFullyRendered, (ready) => {
   emit('render-complete-change', ready);
   if (!ready) return;
@@ -2190,7 +2208,11 @@ const toggleIntermediateSteps = () => {
   showIntermediateSteps.value = !showIntermediateSteps.value;
   nextTick(async () => {
     if (rootElement.value) {
-      await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+      await hydrateProtectedFileImages(
+      rootElement.value,
+      protectedFileAccess.value,
+      protectedFileHydrationOptions.value,
+    );
     }
   });
 };
@@ -2530,7 +2552,11 @@ onMounted(() => {
     (root as any).__citationKeydown__ = keydownListener;
     root.addEventListener('keydown', keydownListener, true);
     rebindCitations();
-    await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await hydrateProtectedFileImages(
+      rootElement.value,
+      protectedFileAccess.value,
+      protectedFileHydrationOptions.value,
+    );
     await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });
@@ -2555,7 +2581,11 @@ onUpdated(() => {
     // and idempotent: blob results are cached per URL, in-flight fetches are
     // de-duped, and failures back off for a cooldown — so a not-yet-ready file
     // simply retries later (and the answerFullyRendered pass is the backstop).
-    await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await hydrateProtectedFileImages(
+      rootElement.value,
+      protectedFileAccess.value,
+      protectedFileHydrationOptions.value,
+    );
     await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });

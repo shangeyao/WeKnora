@@ -2,11 +2,16 @@ package access
 
 import (
 	"context"
+	"html"
+	"regexp"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+// messageContentKBIDRE matches kb_id / knowledge_base_id on persisted <kb/> tags.
+var messageContentKBIDRE = regexp.MustCompile(`(?i)\b(?:knowledge_base_id|kb_id)\s*=\s*"([^"]+)"`)
 
 // MessageFileLookup is the narrow message-service surface needed by the
 // message-scoped file proxy. Keeping it small makes the authorization boundary
@@ -134,6 +139,14 @@ func (a MessageKBShareAuthorizer) collectSharedKBEvidenceIDs(
 		knowledgeIDs = append(knowledgeIDs, id)
 	}
 
+	// Content may cite <kb kb_id="..."/> and ![...](resource://handle) without
+	// denormalizing the handle into KnowledgeReferences (common in KB Q&A answers).
+	if message != nil && textHasResourceHandle(message.Content, handle) {
+		for _, id := range knowledgeBaseIDsFromMessageContent(message.Content) {
+			addKB(id)
+		}
+	}
+
 	for _, ref := range message.KnowledgeReferences {
 		if !searchResultHasResourceHandle(ref, handle) {
 			continue
@@ -246,4 +259,25 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func knowledgeBaseIDsFromMessageContent(content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var ids []string
+	for _, match := range messageContentKBIDRE.FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		id := strings.TrimSpace(html.UnescapeString(match[1]))
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
 }
