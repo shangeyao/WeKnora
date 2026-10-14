@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -92,11 +93,15 @@ func (a MessageKBShareAuthorizer) resourceAccessibleViaSharedKB(
 
 	kbIDs := a.collectSharedKBEvidenceIDs(ctx, message, handle)
 	if len(kbIDs) == 0 {
+		logger.Warnf(ctx, "message file shared-KB authorization denied: message_id=%s resource_id=%s reason=no_kb_evidence",
+			message.ID, resource.ID)
 		return false
 	}
 
 	kbs, err := a.KBs.GetKnowledgeBasesByIDsOnly(ctx, kbIDs)
 	if err != nil {
+		logger.Warnf(ctx, "message file shared-KB authorization denied: message_id=%s resource_id=%s reason=kb_lookup_failed",
+			message.ID, resource.ID)
 		return false
 	}
 	permissions := NewKBSharePermissions(ctx, a.ShareGuard, callerTenantID, callerTenantRole)
@@ -105,14 +110,21 @@ func (a MessageKBShareAuthorizer) resourceAccessibleViaSharedKB(
 			continue
 		}
 		shared, err := permissions.Check(kb.ID, types.OrgRoleViewer)
-		if err == nil && shared {
-			bound, bindingErr := a.Bindings.IsReferencedByKnowledgeBase(
-				ctx, resource.TenantID, kb.ID, types.BuildResourcePath(handle))
-			if bindingErr == nil && bound {
-				return true
-			}
+		if err != nil || !shared {
+			logger.Warnf(ctx, "message file shared-KB candidate denied: message_id=%s resource_id=%s kb_id=%s caller_tenant=%d reason=share_permission lookup_failed=%t",
+				message.ID, resource.ID, kb.ID, callerTenantID, err != nil)
+			continue
 		}
+		bound, bindingErr := a.Bindings.IsReferencedByKnowledgeBase(
+			ctx, resource.TenantID, kb.ID, types.BuildResourcePath(handle))
+		if bindingErr == nil && bound {
+			return true
+		}
+		logger.Warnf(ctx, "message file shared-KB candidate denied: message_id=%s resource_id=%s kb_id=%s reason=live_binding lookup_failed=%t",
+			message.ID, resource.ID, kb.ID, bindingErr != nil)
 	}
+	logger.Warnf(ctx, "message file shared-KB authorization denied: message_id=%s resource_id=%s owner_tenant=%d reason=no_authorized_kb_candidate",
+		message.ID, resource.ID, resource.TenantID)
 	return false
 }
 

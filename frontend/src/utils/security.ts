@@ -730,6 +730,12 @@ export async function hydrateProtectedFileImages(
                 protectedFileFailureCache.delete(singleKey);
                 return { status: 'loaded', ...file };
               }
+              // Completion can persist the message while this request is in
+              // flight. Retry against that new state before caching a 404 or
+              // advancing to a less specific authorization scope.
+              if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) {
+                break;
+              }
               if (resp.status === 404) {
                 protectedFileFailureCache.set(requestKey, Date.now());
                 return { status: 'missing' };
@@ -737,9 +743,6 @@ export async function hydrateProtectedFileImages(
               if (resp.status === 403) {
                 saw403 = true;
                 continue;
-              }
-              if (attempt === 0 && generation !== protectedFileCacheState.retryGeneration) {
-                break;
               }
               throw new Error(`HTTP ${resp.status}`);
             }

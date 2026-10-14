@@ -195,7 +195,7 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 		return FileAccess{}, ErrUnauthorized
 	}
 	if !MessageReferencesFile(message, reference) {
-		return FileAccess{}, ErrForbidden
+		return FileAccess{}, fmt.Errorf("%w: message does not reference file or artifact was deleted", ErrForbidden)
 	}
 	file, resource, err := resolveFile(ctx, catalog, reference)
 	if err != nil {
@@ -206,10 +206,10 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 		owner = resource.TenantID
 	}
 	if owner == 0 {
-		return FileAccess{}, ErrForbidden
+		return FileAccess{}, fmt.Errorf("%w: file owner workspace is missing", ErrForbidden)
 	}
 	if message.Role == "user" && owner != caller.TenantID {
-		return FileAccess{}, ErrForbidden
+		return FileAccess{}, fmt.Errorf("%w: user attachment belongs to another workspace", ErrForbidden)
 	}
 	if kbShares.Bindings == nil {
 		kbShares.Bindings, _ = catalog.(interfaces.KBResourceLookup)
@@ -218,7 +218,7 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 	if resource != nil && message.AgentTenantID != 0 && message.AgentTenantID != owner {
 		kbAuthorized = kbShares.resourceAccessibleViaSharedKB(ctx, message, resource, caller.TenantID, caller.Role)
 		if !kbAuthorized {
-			return FileAccess{}, ErrForbidden
+			return FileAccess{}, fmt.Errorf("%w: resource owner differs from agent workspace and shared KB authorization failed", ErrForbidden)
 		}
 	}
 	if owner != caller.TenantID && !kbAuthorized {
@@ -227,19 +227,19 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 		}
 		if !kbAuthorized {
 			if message.AgentID == "" || agents == nil {
-				return FileAccess{}, ErrForbidden
+				return FileAccess{}, fmt.Errorf("%w: no shared KB authorization or shared agent context", ErrForbidden)
 			}
 			agent, err := agents.GetSharedAgentForTenant(ctx, caller.TenantID, caller.Role, message.AgentID, owner)
 			if err != nil || agent == nil || agent.TenantID != owner {
-				return FileAccess{}, ErrForbidden
+				return FileAccess{}, fmt.Errorf("%w: shared agent grant is unavailable or belongs to another workspace", ErrForbidden)
 			}
 			bindings, ok := catalog.(interfaces.MessageFileBindingLookup)
 			if !ok {
-				return FileAccess{}, ErrForbidden
+				return FileAccess{}, fmt.Errorf("%w: message file binding lookup is unavailable", ErrForbidden)
 			}
 			origins, err := bindings.GetMessageFileBindings(ctx, owner, reference, message.ID)
 			if err != nil || origins == nil {
-				return FileAccess{}, ErrForbidden
+				return FileAccess{}, fmt.Errorf("%w: message file binding lookup failed", ErrForbidden)
 			}
 			allowed := origins.MessageArtifact
 			scope := types.NewSharedAgentKBScope(agent)
@@ -249,13 +249,13 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 				}
 			}
 			if !allowed {
-				return FileAccess{}, ErrForbidden
+				return FileAccess{}, fmt.Errorf("%w: file is not bound to this message or selected shared-agent knowledge bases", ErrForbidden)
 			}
 		}
 	}
 	if resource == nil {
 		if err := secutils.ValidateStoragePathTenant(file.Path, owner); err != nil {
-			return FileAccess{}, ErrForbidden
+			return FileAccess{}, fmt.Errorf("%w: storage path does not belong to the file owner workspace", ErrForbidden)
 		}
 	}
 	file.OwnerTenantID = owner

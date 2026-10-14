@@ -1,6 +1,6 @@
 /** Vite public base URL, e.g. `/` or `/weknora/`. */
 export function getViteBaseUrl(): string {
-  const base = import.meta.env.BASE_URL || '/'
+  const base = import.meta.env?.BASE_URL || '/'
   return base.endsWith('/') ? base : `${base}/`
 }
 

@@ -467,6 +467,8 @@ func fileAccessError(c *gin.Context, err error) bool {
 	case errors.Is(err, access.ErrUnauthorized):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: workspace context missing"})
 	case errors.Is(err, access.ErrForbidden):
+		logger.Warnf(c.Request.Context(), "file authorization denied: route=%s caller_tenant=%d reason=%v",
+			c.FullPath(), types.CallerFromContext(c.Request.Context()).TenantID, err)
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden: file not accessible from this resource"})
 	default:
 		if app, ok := apperrors.IsAppError(err); ok {

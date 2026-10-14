@@ -10,7 +10,13 @@ cd "$ROOT"
 ACR_REGISTRY="${ACR_REGISTRY:-crpi-o8kn58wjl072akln.cn-hangzhou.personal.cr.aliyuncs.com}"
 ACR_NAMESPACE="${ACR_NAMESPACE:-calb_ai}"
 ACR_REPO="${ACR_REPO:-weknora}"
-WEKNORA_VERSION="${WEKNORA_VERSION:-v0.8.0}"
+WEKNORA_VERSION="${WEKNORA_VERSION:-}"
+# Match compose's .env override, then its CALB default, so rebuilding cannot
+# silently publish fixes under a different tag from the running deployment.
+if [[ -z "$WEKNORA_VERSION" && -f .env ]]; then
+  WEKNORA_VERSION="$(sed -n 's/^WEKNORA_VERSION=//p' .env | head -1 | tr -d '\"' | tr -d "'" | xargs)"
+fi
+WEKNORA_VERSION="${WEKNORA_VERSION:-v0.8.2}"
 # Upstream runtime base for overlay (Hub tag; only ships OS/deps, not your Go/Vue code).
 RUNTIME_BASE_VERSION="${RUNTIME_BASE_VERSION:-v0.8.0}"
 RUNTIME_BASE_IMAGE="${RUNTIME_BASE_IMAGE:-${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPO}:app-${RUNTIME_BASE_VERSION}}"
@@ -74,8 +80,13 @@ build_ui_image() {
   cid="$(docker create --platform "${DOCKER_PLATFORM}" "${ui_base}")"
   docker cp frontend/dist/. "${cid}:/usr/share/nginx/html/"
   docker cp frontend/nginx.conf "${cid}:/etc/nginx/templates/default.conf.template"
-  # Host checkout is often 644; without +x the image fails: exec permission denied.
-  docker cp --chmod=755 frontend/docker-entrypoint.sh "${cid}:/docker-entrypoint.sh"
+  # docker cp has no --chmod option. Stage an executable copy so its mode is
+  # preserved without changing the checkout or starting the base container.
+  local entrypoint_dir
+  entrypoint_dir="$(mktemp -d)"
+  install -m 755 frontend/docker-entrypoint.sh "${entrypoint_dir}/docker-entrypoint.sh"
+  docker cp "${entrypoint_dir}/docker-entrypoint.sh" "${cid}:/docker-entrypoint.sh"
+  rm -rf "${entrypoint_dir}"
   docker cp frontend/nginx-api-proxy.conf "${cid}:/etc/nginx/api-proxy.conf"
   docker cp frontend/nginx-http.conf "${cid}:/etc/nginx/conf.d/00-weknora-http.conf"
   docker commit \

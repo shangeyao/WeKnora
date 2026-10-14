@@ -27,6 +27,36 @@ func (catalogFileShares) GetKnowledgeBasesByIDsOnly(context.Context, []string) (
 
 type catalogFileAgent struct{ agent *types.CustomAgent }
 
+// Content KB tags identify retrieval evidence, but cannot replace the image's
+// ownership claim. This reproduces legacy parsed images registered without a
+// resource binding, and verifies that a targeted claim restores access.
+func TestCatalogSharedKBImageWithoutBindingIsDeniedUntilRepair(t *testing.T) {
+	catalog, db := newResourceCatalogForTest(t)
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}))
+	ctx := newSharedAccessContext()
+	ref, err := catalog.Register(ctx, 7, "local://7/exports/legacy-image.png", interfaces.ResourceRegistration{Kind: "image"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&types.KnowledgeBase{ID: "shared", TenantID: 7}).Error)
+	doc := &types.Knowledge{ID: "legacy-doc", TenantID: 7, KnowledgeBaseID: "shared", Type: "file"}
+	require.NoError(t, db.Create(doc).Error)
+	message := &types.Message{
+		ID: "message", Role: "assistant", AgentTenantID: 1,
+		Content: `<kb kb_id="shared" /> ![image](` + ref + `)`,
+	}
+	shares := access.MessageKBShareAuthorizer{ShareGuard: catalogFileShares{}, KBs: catalogFileShares{}}
+	_, err = access.AuthorizeMessageFile(ctx, message, ref, nil, catalog, shares)
+	require.ErrorIs(t, err, access.ErrForbidden)
+
+	require.NoError(t, catalog.Bind(ctx, ref, types.ResourceOwnerKnowledge, doc.ID, types.ResourceRelationExtractedImage))
+	file, err := access.AuthorizeMessageFile(ctx, message, ref, nil, catalog, shares)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), file.OwnerTenantID)
+
+	require.NoError(t, db.Delete(doc).Error)
+	_, err = access.AuthorizeMessageFile(ctx, message, ref, nil, catalog, shares)
+	require.ErrorIs(t, err, access.ErrForbidden, "repair must not bypass live-document checks")
+}
+
 func (a *catalogFileAgent) GetSharedAgentForTenant(
 	context.Context,
 	uint64,
